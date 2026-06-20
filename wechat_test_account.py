@@ -150,6 +150,13 @@ class WeChatTestBot:
     
     def _send_message(self, openid: str, content: str):
         """发送客服消息给用户"""
+        # 修复 unicode 转义字符（如 \u4f60\u597d → 你好）
+        if isinstance(content, str) and '\\u' in content:
+            try:
+                content = json.loads(f'"{content}"')
+            except:
+                pass
+        
         access_token = self._get_access_token()
         if not access_token:
             logger.error("无法发送消息：access_token 获取失败")
