@@ -152,25 +152,18 @@ class WeChatTestBot:
         """发送客服消息给用户"""
         logger.info(f"📤 准备发送消息给 {openid[:8]}... 内容长度: {len(content)}")
         
-        # 修复 unicode 转义字符（如 \u4f60\u597d → 你好）
-        if isinstance(content, str) and '\\u' in content:
-            try:
-                content = json.loads(f'"{content}"')
-                logger.info("✅ unicode转义已修复")
-            except:
-                pass
-        
         access_token = self._get_access_token()
         if not access_token:
             logger.error("❌ 无法发送消息：access_token 获取失败")
             return False
         
         url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={access_token}"
+        # 使用 ensure_ascii=False 防止中文被转义为 \uXXXX
         data = json.dumps({
             "touser": openid,
             "msgtype": "text",
             "text": {"content": content}
-        }).encode()
+        }, ensure_ascii=False).encode('utf-8')
         
         try:
             req = urllib.request.Request(url, data=data, headers={
@@ -224,12 +217,7 @@ class WeChatTestBot:
     
     def _build_xml_reply(self, from_user: str, to_user: str, content: str) -> str:
         """构建 XML 回复消息"""
-        # 修复 unicode 转义字符（如 \u6d4b\u8bd5 → 测试）
-        if '\\u' in content:
-            try:
-                content = re.sub(r'\\u[0-9a-fA-F]{4}', lambda m: chr(int(m.group(0)[2:], 16)), content)
-            except:
-                pass
+        # content 中的中文直接使用即可，XML/HTTP 传输会正确处理 UTF-8
         return f"""<xml>
 <ToUserName><![CDATA[{from_user}]]></ToUserName>
 <FromUserName><![CDATA[{to_user}]]></FromUserName>
