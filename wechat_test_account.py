@@ -316,7 +316,8 @@ class WeChatTestBot:
             
             def do_POST(self):
                 """处理微信消息推送 (POST)"""
-                if self.path != "/wechat":
+                # 不管路径是否带参数，只要是以 /wechat 开头就处理
+                if not self.path.startswith("/wechat"):
                     self.send_response(404)
                     self.end_headers()
                     return
