@@ -180,16 +180,18 @@ class WeChatTestBot:
                 result = json.loads(resp.read())
             
             if result.get("errcode") == 0:
+                logger.info(f"✅ 消息发送成功 (errcode=0)")
                 return True
             elif result.get("errcode") == 40001:
                 # token 过期，清缓存重试
+                logger.warning("⚠️ token过期，重试中...")
                 self._access_token = None
                 return self._send_message(openid, content)
             else:
-                logger.error(f"发送消息失败: {result}")
+                logger.error(f"❌ 发送消息失败: {json.dumps(result, ensure_ascii=False)}")
                 return False
         except Exception as e:
-            logger.error(f"发送消息出错: {e}")
+            logger.error(f"❌ 发送消息请求异常: {e}")
             return False
     
     def _send_typing(self, openid: str):
@@ -222,10 +224,10 @@ class WeChatTestBot:
     
     def _build_xml_reply(self, from_user: str, to_user: str, content: str) -> str:
         """构建 XML 回复消息"""
-        # 修复 unicode 转义字符
+        # 修复 unicode 转义字符（如 \u6d4b\u8bd5 → 测试）
         if '\\u' in content:
             try:
-                content = content.encode('utf-8').decode('unicode_escape')
+                content = re.sub(r'\\u[0-9a-fA-F]{4}', lambda m: chr(int(m.group(0)[2:], 16)), content)
             except:
                 pass
         return f"""<xml>
@@ -237,7 +239,7 @@ class WeChatTestBot:
 </xml>"""
     
     def _handle_message(self, xml_data: str) -> str:
-        """处理微信消息，返回 XML 回复"""
+        """处理微信消息，返回 success"""
         msg = self._parse_xml(xml_data)
         
         msg_type = msg.get("MsgType", "")
@@ -252,7 +254,7 @@ class WeChatTestBot:
             logger.info(f"⏭️ 跳过非文本消息: {msg_type}")
             return "success"
         
-        # 如果有 Agent，用 Agent 处理（同步方式，直接返回 XML）
+        # 如果有 Agent，用 Agent 处理
         if self.agent:
             try:
                 logger.info(f"🤖 Agent正在处理消息...")
@@ -261,19 +263,34 @@ class WeChatTestBot:
                 logger.info(f"📄 回复内容: {reply[:300]}")
                 
                 if reply:
-                    # 方式1: 直接返回 XML（同步回复，微信会自动推送给用户）
-                    xml_reply = self._build_xml_reply(from_user, to_user, reply)
-                    logger.info(f"📤 直接返回 XML 回复")
-                    return xml_reply
+                    # 先发送"正在输入"状态
+                    self._send_typing(from_user)
+                    
+                    # 异步发送客服消息（微信需要在5秒内响应 success）
+                    def process_and_reply():
+                        # 分段发送（微信限制每条 2048 字符）
+                        chunk_size = 1800
+                        for i in range(0, len(reply), chunk_size):
+                            chunk = reply[i:i + chunk_size]
+                            if i + chunk_size < len(reply):
+                                chunk += "…"
+                            result = self._send_message(from_user, chunk)
+                            logger.info(f"📤 发送消息块 {i//chunk_size + 1}: {'✅' if result else '❌'}")
+                            if not result:
+                                logger.warning(f"⚠️ 消息块 {i//chunk_size + 1} 发送失败")
+                            time.sleep(0.5)
+                    
+                    thread = threading.Thread(target=process_and_reply)
+                    thread.daemon = True
+                    thread.start()
+                    
+                    logger.info(f"📤 已返回 success，异步发送客服消息")
                 else:
                     logger.warning("⚠️ Agent返回了空回复")
-                    return "success"
                 
             except Exception as e:
                 logger.error(f"❌ 处理消息失败: {e}")
-                return "success"
-        else:
-            logger.warning("⚠️ 没有配置 Agent，无法处理消息")
+        
         return "success"
     
     def start(self):
@@ -353,7 +370,7 @@ class WeChatTestBot:
                 reply = self.bot._handle_message(xml_data)
                 
                 self.send_response(200)
-                self.send_header("Content-Type", "text/xml")
+                self.send_header("Content-Type", "text/plain")
                 self.end_headers()
                 self.wfile.write(reply.encode())
             
