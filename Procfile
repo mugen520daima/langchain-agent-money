@@ -1,1 +1,1 @@
-web: python wechat_test_account.py
+web: python railway_start.py

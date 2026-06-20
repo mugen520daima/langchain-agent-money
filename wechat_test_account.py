@@ -275,6 +275,14 @@ class WeChatTestBot:
             
             def do_GET(self):
                 """处理微信验证请求 (GET)"""
+                # 健康检查
+                if self.path == "/health":
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"status":"ok"}')
+                    return
+                
                 # 不管路径，只要带 signature 参数就尝试验证
                 params = {
                     "signature": self._get_param("signature"),
