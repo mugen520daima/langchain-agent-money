@@ -222,6 +222,12 @@ class WeChatTestBot:
     
     def _build_xml_reply(self, from_user: str, to_user: str, content: str) -> str:
         """构建 XML 回复消息"""
+        # 修复 unicode 转义字符
+        if '\\u' in content:
+            try:
+                content = content.encode('utf-8').decode('unicode_escape')
+            except:
+                pass
         return f"""<xml>
 <ToUserName><![CDATA[{from_user}]]></ToUserName>
 <FromUserName><![CDATA[{to_user}]]></FromUserName>
