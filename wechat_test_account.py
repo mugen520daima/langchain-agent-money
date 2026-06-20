@@ -257,6 +257,7 @@ class WeChatTestBot:
                     logger.info(f"🤖 Agent开始处理消息...")
                     reply = self.agent(content, from_user)
                     logger.info(f"🤖 Agent返回了 {len(reply)} 个字符")
+                    logger.info(f"📄 回复内容: {reply[:300]}")
                     if reply:
                         # 分段发送（微信限制每条 2048 字符）
                         chunk_size = 1800
