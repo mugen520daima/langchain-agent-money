@@ -6,7 +6,7 @@
   },
   "deploy": {
     "startCommand": "python railway_start.py",
-    "healthcheckPath": "/wechat",
+    "healthcheckPath": "/health",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
