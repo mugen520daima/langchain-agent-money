@@ -150,16 +150,19 @@ class WeChatTestBot:
     
     def _send_message(self, openid: str, content: str):
         """发送客服消息给用户"""
+        logger.info(f"📤 准备发送消息给 {openid[:8]}... 内容长度: {len(content)}")
+        
         # 修复 unicode 转义字符（如 \u4f60\u597d → 你好）
         if isinstance(content, str) and '\\u' in content:
             try:
                 content = json.loads(f'"{content}"')
+                logger.info("✅ unicode转义已修复")
             except:
                 pass
         
         access_token = self._get_access_token()
         if not access_token:
-            logger.error("无法发送消息：access_token 获取失败")
+            logger.error("❌ 无法发送消息：access_token 获取失败")
             return False
         
         url = f"https://api.weixin.qq.com/cgi-bin/message/custom/send?access_token={access_token}"
@@ -240,6 +243,7 @@ class WeChatTestBot:
         
         # 只处理文本消息
         if msg_type != self.MSG_TEXT:
+            logger.info(f"⏭️ 跳过非文本消息: {msg_type}")
             return "success"
         
         # 如果有 Agent，用 Agent 处理
@@ -250,7 +254,9 @@ class WeChatTestBot:
                 
                 # 异步处理消息（微信需要在 5 秒内回复 success）
                 def process_and_reply():
+                    logger.info(f"🤖 Agent开始处理消息...")
                     reply = self.agent(content, from_user)
+                    logger.info(f"🤖 Agent返回了 {len(reply)} 个字符")
                     if reply:
                         # 分段发送（微信限制每条 2048 字符）
                         chunk_size = 1800
@@ -258,16 +264,21 @@ class WeChatTestBot:
                             chunk = reply[i:i + chunk_size]
                             if i + chunk_size < len(reply):
                                 chunk += "…"
-                            self._send_message(from_user, chunk)
+                            result = self._send_message(from_user, chunk)
+                            logger.info(f"📤 发送消息块 {i//chunk_size + 1}: {'✅' if result else '❌'}")
                             time.sleep(0.5)
+                    else:
+                        logger.warning("⚠️ Agent返回了空回复")
                 
                 thread = threading.Thread(target=process_and_reply)
                 thread.daemon = True
                 thread.start()
                 
             except Exception as e:
-                logger.error(f"处理消息失败: {e}")
+                logger.error(f"❌ 处理消息失败: {e}")
                 self._send_message(from_user, f"呜…巧克力好像出错了喵~ {str(e)}")
+        else:
+            logger.warning("⚠️ 没有配置 Agent，无法处理消息")
         
         return "success"
     
