@@ -246,41 +246,28 @@ class WeChatTestBot:
             logger.info(f"⏭️ 跳过非文本消息: {msg_type}")
             return "success"
         
-        # 如果有 Agent，用 Agent 处理
+        # 如果有 Agent，用 Agent 处理（同步方式，直接返回 XML）
         if self.agent:
             try:
-                # 先发送"正在输入"状态
-                self._send_typing(from_user)
+                logger.info(f"🤖 Agent正在处理消息...")
+                reply = self.agent(content, from_user)
+                logger.info(f"🤖 Agent返回了 {len(reply)} 个字符")
+                logger.info(f"📄 回复内容: {reply[:300]}")
                 
-                # 异步处理消息（微信需要在 5 秒内回复 success）
-                def process_and_reply():
-                    logger.info(f"🤖 Agent开始处理消息...")
-                    reply = self.agent(content, from_user)
-                    logger.info(f"🤖 Agent返回了 {len(reply)} 个字符")
-                    logger.info(f"📄 回复内容: {reply[:300]}")
-                    if reply:
-                        # 分段发送（微信限制每条 2048 字符）
-                        chunk_size = 1800
-                        for i in range(0, len(reply), chunk_size):
-                            chunk = reply[i:i + chunk_size]
-                            if i + chunk_size < len(reply):
-                                chunk += "…"
-                            result = self._send_message(from_user, chunk)
-                            logger.info(f"📤 发送消息块 {i//chunk_size + 1}: {'✅' if result else '❌'}")
-                            time.sleep(0.5)
-                    else:
-                        logger.warning("⚠️ Agent返回了空回复")
-                
-                thread = threading.Thread(target=process_and_reply)
-                thread.daemon = True
-                thread.start()
+                if reply:
+                    # 方式1: 直接返回 XML（同步回复，微信会自动推送给用户）
+                    xml_reply = self._build_xml_reply(from_user, to_user, reply)
+                    logger.info(f"📤 直接返回 XML 回复")
+                    return xml_reply
+                else:
+                    logger.warning("⚠️ Agent返回了空回复")
+                    return "success"
                 
             except Exception as e:
                 logger.error(f"❌ 处理消息失败: {e}")
-                self._send_message(from_user, f"呜…巧克力好像出错了喵~ {str(e)}")
+                return "success"
         else:
             logger.warning("⚠️ 没有配置 Agent，无法处理消息")
-        
         return "success"
     
     def start(self):
