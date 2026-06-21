@@ -89,6 +89,13 @@ class DatabaseManager:
         
         try:
             import aiomysql
+            import ssl
+            
+            # TiDB Serverless 需要自定义 SSL 上下文
+            ctx = ssl.create_default_context()
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+            
             self._pool = await aiomysql.create_pool(
                 host=self.config.get("host", "127.0.0.1"),
                 port=int(self.config.get("port", 4000)),
@@ -97,7 +104,7 @@ class DatabaseManager:
                 db=self.config.get("database", "fund_agent"),
                 maxsize=int(self.config.get("pool_size", 5)),
                 autocommit=True,
-                ssl=True,  # TiDB Serverless / 云数据库需要 SSL
+                ssl=ctx,
             )
             self._connected = True
             print(f"✅ 数据库连接成功: {self.config.get('host')}:{self.config.get('port')}/{self.config.get('database')}")
