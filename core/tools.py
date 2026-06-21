@@ -491,10 +491,7 @@ def query_fund_history(fund_code: str, period: str = "month") -> str:
     """
     # 先尝试从数据库获取
     try:
-        import asyncio
-        loop = asyncio.new_event_loop()
-        history = loop.run_until_complete(_db_manager.get_fund_history(fund_code))
-        loop.close()
+        history = _run_async(_db_manager.get_fund_history(fund_code))
         if history:
             chart = _format_history_chart(history)
             name = _get_fund_name(fund_code)
@@ -518,10 +515,7 @@ def query_fund_history(fund_code: str, period: str = "month") -> str:
     
     # 异步保存到数据库（不阻塞返回）
     try:
-        import asyncio
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(_db_manager.save_fund_history(fund_code, history))
-        loop.close()
+        _run_async(_db_manager.save_fund_history(fund_code, history))
     except Exception:
         pass
     
