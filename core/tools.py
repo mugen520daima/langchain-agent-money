@@ -894,7 +894,17 @@ def delete_user_portfolio(user_id: str, fund_code: str) -> str:
     
     # 从内存删除
     if user_id in _global_portfolios:
-    return f"已删除 {name} 的持仓信息。"
+        _global_portfolios[user_id]["funds"] = [
+            f for f in _global_portfolios[user_id]["funds"] if f["code"] != fund_code
+        ]
+    
+    # 同步从数据库删除
+    success = _run_async(_db_manager.delete_user_portfolio(user_id, fund_code))
+    
+    if success:
+        return f"已删除 {name} 的持仓信息。"
+    else:
+        return f"删除 {name} 的持仓信息失败。"
 
 
 # ============================================================
