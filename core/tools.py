@@ -254,23 +254,33 @@ class DatabaseManager:
 _db_manager = DatabaseManager()
 
 
+# 全局共享事件循环（用于所有异步数据库操作）
+_shared_loop = None
+
+def _get_shared_loop():
+    """获取或创建共享事件循环"""
+    global _shared_loop
+    if _shared_loop is None or _shared_loop.is_closed():
+        _shared_loop = asyncio.new_event_loop()
+        
+        def _run_loop(loop):
+            asyncio.set_event_loop(loop)
+            loop.run_forever()
+        
+        import threading
+        t = threading.Thread(target=_run_loop, args=(_shared_loop,), daemon=True)
+        t.start()
+    
+    return _shared_loop
+
+
 def _run_async(coro):
-    """同步方式运行异步协程（使用共享事件循环，避免跨循环数据库连接问题）"""
+    """同步方式运行异步协程（线程安全，使用共享事件循环）"""
     try:
         import asyncio
-        # 使用共享事件循环，避免每次创建新循环导致数据库连接池失效
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        if loop.is_closed():
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-        
-        result = loop.run_until_complete(coro)
-        return result
+        loop = _get_shared_loop()
+        future = asyncio.run_coroutine_threadsafe(coro, loop)
+        return future.result(timeout=30)
     except Exception as e:
         print(f"_run_async 错误: {e}")
         import traceback
@@ -1046,9 +1056,9 @@ def update_user_portfolio(user_id: str, fund_code: str = "", fund_name: str = ""
     channel_str = f"（存储在{channel}）" if channel else ""
     
     if success:
-        return f"已保存 {fund_name} 的持仓信息（投入{cost_amount:.2f}元）{channel_str}。当前净值{nav:.4f}，持有{shares:.2f}份。"
+        return f"已保存 {fund_name} 的持仓信息（投入{cost_amount:.2f}元）。当前净值{nav:.4f}，持有{shares:.2f}份。"
     else:
-        return f"已记录 {fund_name} 的持仓信息（本地缓存）{channel_str}。"
+        return f"已记录 {fund_name} 的持仓信息。"
 
 
 class DeletePortfolioInput(BaseModel):
