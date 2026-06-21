@@ -16,6 +16,7 @@
 - [项目结构](#-项目结构)
 - [API 文档](#-api-文档)
 - [常见问题](#-常见问题)
+- [LangChain Agent 架构](#-langchain-agent-架构新版)
 - [免责声明](#-免责声明)
 
 ---
@@ -86,7 +87,7 @@
 
 | 层级 | 模块 | 职责 |
 |------|------|------|
-| **交互层** | `wechat/bot.py`, `main.py`, `start.py` | 接收用户消息，发送响应，支持微信和控制台 |
+| **交互层** | `wechat_test_account.py`, `main.py`, `start.py` | 接收用户消息，发送响应，支持微信和控制台 |
 | **核心层** | `core/agent.py` | 意图识别、业务流程编排、模块协调 |
 | **分析层** | `analysis/*.py` | 持仓分析、风险评估、基金推荐算法 |
 | **数据层** | `fund_data/fetcher.py` | 从天天基金 API 获取各类基金数据 |
@@ -100,10 +101,12 @@
 
 | 技术 | 版本 | 用途 |
 |------|------|------|
-| **Python** | ≥ 3.9 | 开发语言 |
-| **requests** | ≥ 2.28 | HTTP 请求，调用天天基金 API |
-| **PyYAML** | ≥ 6.0 | 配置文件解析 |
-| **NumPy** | ≥ 1.23 | 数值计算，评分模型的 Sigmoid 标准化 |
+| **Python** | >= 3.9 | 开发语言 |
+| **LangChain** | >= 0.2 | LLM Agent 框架，驱动 AI 对话式交互 |
+| **requests** | >= 2.28 | HTTP 请求，调用天天基金 API |
+| **PyYAML** | >= 6.0 | 配置文件解析 |
+| **NumPy** | >= 1.23 | 数值计算，评分模型的 Sigmoid 标准化 |
+| **pymysql** | >= 1.0 | TiDB/MySQL 数据库连接 |
 
 ### 数据获取
 
@@ -112,23 +115,23 @@
 ```
 # 实时估值接口
 GET https://fundgz.1234567.com.cn/js/{fund_code}.js
-# → {fundcode, name, dwjz, gsz, gszzl, gztime}
+# -> {fundcode, name, dwjz, gsz, gszzl, gztime}
 
 # 基金详情接口（含净值历史、持仓数据）
 GET https://fund.eastmoney.com/pingzhongdata/{fund_code}.js
-# → Data_netWorthTrend, Data_ACWorthTrend, Data_stockFundStocks
+# -> Data_netWorthTrend, Data_ACWorthTrend, Data_stockFundStocks
 
 # 收益率接口
 GET https://fund.eastmoney.com/api/FundGuV40Api.ashx?DataType=1&Fcodes={code}
-# → SYL_JZ(近1月), SYL_3Y(近3月), SYL_1N(近1年), ...
+# -> SYL_JZ(近1月), SYL_3Y(近3月), SYL_1N(近1年), ...
 
 # 基金经理接口
 GET https://fundmobapi.eastmoney.com/fund/FundManagerInfo?FUNDCODE={code}
-# → Managers[{MANAGERNAME, STARTDATE, RETURN, ...}]
+# -> Managers[{MANAGERNAME, STARTDATE, RETURN, ...}]
 
 # 基金搜索接口
 GET https://fund.eastmoney.com/js/fundcode_search.js
-# → [[代码, 拼音, 名称, 类型, 拼音缩写], ...]
+# -> [[代码, 拼音, 名称, 类型, 拼音缩写], ...]
 ```
 
 ### 数据持久化（TiDB）
@@ -140,27 +143,24 @@ GET https://fund.eastmoney.com/js/fundcode_search.js
 - **收益率表** (`fund_returns`)：缓存阶段性收益率数据
 - **用户持仓表** (`user_portfolios`)：存储用户持仓配置
 
-数据库表结构详见下文 [数据库表结构](#-数据库表结构)。
-
 ### 评分模型
 
 推荐算法基于 **多因子量化评分模型**，使用 NumPy 的 Sigmoid 函数进行标准化：
 
 ```
-Score = Σ(W_i × S_i)
+Score = Sum(W_i x S_i)
 
 因子权重:
-  ├── 收益因子 (60%): 近1月~近3年加权收益评分
-  ├── 风险因子 (20%): 最大回撤 + 波动率评分 (负向)
-  ├── 稳定因子 (10%): 经理稳定性 + 基金评级评分
-  └── 规模因子 (10%): 适度规模加分(20亿~100亿最优)
+  +-- 收益因子 (60%): 近1月~近3年加权收益评分
+  +-- 风险因子 (20%): 最大回撤 + 波动率评分 (负向)
+  +-- 稳定因子 (10%): 经理稳定性 + 基金评级评分
+  +-- 规模因子 (10%): 适度规模加分(20亿~100亿最优)
 ```
 
 ### 可选依赖
 
 | 技术 | 用途 |
 |------|------|
-| **itchat** | 微信个人号交互（扫码登录） |
 | **rich** | 控制台美化输出 |
 | **matplotlib** | 基金走势图可视化 |
 
@@ -172,56 +172,56 @@ Score = Σ(W_i × S_i)
 
 ```
 用户输入
-    │
-    ▼
-┌─────────────────────┐
-│  1. 意图识别          │  ← 正则表达式匹配
-│  _parse_intent()     │
-│                      │
-│  ├─ "报告"/"持仓"     │  → 报告意图
-│  ├─ "000001"         │  → 查询意图
-│  ├─ "搜索 白酒"       │  → 搜索意图
-│  ├─ "推荐"            │  → 推荐意图
-│  └─ "帮助"            │  → 帮助意图
-└─────────┬───────────┘
-          │
-          ▼ (以报告意图为例)
-┌─────────────────────┐
-│  2. 获取持仓配置       │  ← 从 config.yaml 读取
-│  portfolios[user]   │
-└─────────┬───────────┘
-          │
-          ▼ (遍历持仓基金)
-┌──────────────────────────────────────────────┐
-│  3. 循环获取每支基金数据                        │
-│                                              │
-│  for fund in funds:                          │
-│    ├─ compute_investment_metrics(code, cost)  │  → 计算市值/盈亏
-│    ├─ get_fund_comprehensive_info(code)       │  → 获取综合数据
-│    └─ risk_analyzer.analyze(info)             │  → 分析风险
-└───────────────────┬──────────────────────────┘
-                    │
-                    ▼
-┌─────────────────────┐
-│  4. 组合分析          │
-│  portfolio_analyzer │  → 持仓集中度、整体评价
-│  .analyze_portfolio │
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│  5. 获取推荐          │
-│  recommender        │  → 排除已持仓基金
-│  .recommend()       │  → 多因子评分
-└─────────┬───────────┘
-          │
-          ▼
-┌─────────────────────┐
-│  6. 生成报告          │  ← ReportGenerator
-│  generate_full_report│  → 格式化文本输出
-└─────────┬───────────┘
-          │
-          ▼
+    |
+    v
++---------------------+
+|  1. 意图识别          |  <- 正则表达式匹配
+|  _parse_intent()     |
+|                      |
+|  +- "报告"/"持仓"     |  -> 报告意图
+|  +- "000001"         |  -> 查询意图
+|  +- "搜索 白酒"       |  -> 搜索意图
+|  +- "推荐"            |  -> 推荐意图
+|  +- "帮助"            |  -> 帮助意图
++---------+-----------+
+          |
+          v (以报告意图为例)
++---------------------+
+|  2. 获取持仓配置       |  <- 从 config.yaml 读取
+|  portfolios[user]   |
++---------+-----------+
+          |
+          v (遍历持仓基金)
++----------------------------------------------+
+|  3. 循环获取每支基金数据                        |
+|                                              |
+|  for fund in funds:                          |
+|    +- compute_investment_metrics(code, cost)  |  -> 计算市值/盈亏
+|    +- get_fund_comprehensive_info(code)       |  -> 获取综合数据
+|    +- risk_analyzer.analyze(info)             |  -> 分析风险
++-------------------+--------------------------+
+                    |
+                    v
++---------------------+
+|  4. 组合分析          |
+|  portfolio_analyzer |  -> 持仓集中度、整体评价
+|  .analyze_portfolio |
++---------+-----------+
+          |
+          v
++---------------------+
+|  5. 获取推荐          |
+|  recommender        |  -> 排除已持仓基金
+|  .recommend()       |  -> 多因子评分
++---------+-----------+
+          |
+          v
++---------------------+
+|  6. 生成报告          |  <- ReportGenerator
+|  generate_full_report|  -> 格式化文本输出
++---------+-----------+
+          |
+          v
       返回给用户
 ```
 
@@ -257,11 +257,11 @@ def _get_fund_data(self, fund_code):
 ### 📊 持仓分析
 - **投入产出计算**：总投入、当前市值、总盈亏、收益率
 - **集中度分析**：单支/前3持仓占比、集中度等级评估
-- **持仓质量评价**：优质持仓 ✅ / 中等持仓 📊 / 需关注 ⚠️ / 建议止损 ❌
+- **持仓质量评价**：优质持仓  / 中等持仓  / 需关注  / 建议止损 
 - **操作建议**：基于盈亏比例和中长期评价的综合建议
 - **持仓明细**：逐支基金展示盈亏、仓位、当日涨跌幅
 
-### ⚠️ 风险监控
+###   ️ 风险监控
 
 | 风险类型 | 检测方式 | 严重等级 |
 |----------|---------|---------|
@@ -277,7 +277,7 @@ def _get_fund_data(self, fund_code):
 - **多因子评分**：收益60% + 风险20% + 稳定10% + 规模10%
 - **Sigmoid 标准化**：使用 NumPy 非线性映射将收益率映射到 0-100 分
 - **智能排除**：自动过滤用户已持有的基金
-- **星级评定**：★★★★★ (≥90) 到 ★☆☆☆☆ (<40)
+- **星级评定**：★★★★★ (>=90) 到 ★☆☆☆☆ (<40)
 - **规模偏好**：20亿~100亿规模基金得分最高
 
 ---
@@ -286,7 +286,7 @@ def _get_fund_data(self, fund_code):
 
 ### 环境要求
 
-- Python ≥ 3.9
+- Python >= 3.9
 - pip 包管理器
 - 网络连接（访问天天基金 API）
 
@@ -353,32 +353,26 @@ python start.py
 
 启动后界面演示：
 ```
-╔══════════════════════════════════════════════╗
-║     🤖  基 金 报 告 助 手                    ║
-╠══════════════════════════════════════════════╣
-║  支持: 持仓分析 · 风险评估 · 基金推荐       ║
-╚══════════════════════════════════════════════╝
+========================================
+     🤖  基 金 报 告 助 手                    
+========================================
+  支持: 持仓分析 · 风险评估 · 基金推荐       
+========================================
 
 支持以下指令：
-  📋 输入「报告」→ 生成持仓分析报告
-  🔍 输入基金代码 → 查询单支基金详情
-  🔎 输入「搜索 xxx」→ 搜索相关基金
-  🎯 输入「推荐」→ 获取基金推荐
-  ❓ 输入「帮助」→ 查看帮助
-  🚪 输入「退出」→ 退出程序
+  📋 输入「报告」-> 生成持仓分析报告
+  🔍 输入基金代码 -> 查询单支基金详情
+  🔎 输入「搜索 xxx」-> 搜索相关基金
+  🎯 输入「推荐」-> 获取基金推荐
+  ❓ 输入「帮助」-> 查看帮助
+  🚪 输入「退出」-> 退出程序
 
 👤 请输入:
 ```
 
-### 方式二：微信交互（个人微信）
+### 方式二：微信交互（微信测试号）
 
-有两种方式可以在个人微信中与"巧克力"聊天：
-
----
-
-#### 方式 A：微信测试号（推荐，稳定免费）
-
-使用微信官方的**测试号**接口，不需要注册企业，**用你的个人微信关注测试号后，在微信里直接和巧克力对话**。
+使用微信官方的**测试号**接口，不需要注册企业，**用你的个人微信关注测试号后，在微信里直接对话**。
 
 **📋 配置步骤：**
 
@@ -413,7 +407,7 @@ ngrok http 9000
 
 **第 4 步：回填到测试号后台**
 1. 回到刚才的测试号页面：https://mp.weixin.qq.com/debug/cgi-bin/sandbox
-2. 找到 **接口配置信息** → 点击「修改」
+2. 找到 **接口配置信息** -> 点击「修改」
 3. URL 填：`https://你的ngrok地址/wechat`（例如 `https://abc123.ngrok.io/wechat`）
 4. Token 填你刚才输入的 Token（如 `fundagent123`）
 5. 点击提交，显示"配置成功"就 OK 了
@@ -424,23 +418,22 @@ ngrok http 9000
 - ngrok 免费版每次启动 URL 会变，需要重新回填
 - 如果想永久使用，可以用阿里云/腾讯云等部署（1 行代码都不用改）
 
----
-
-#### 方式 B：itchat 个人号（已停用）
+### 方式三：一键部署到 Railway
 
 ```bash
-python wechat_launcher.py
+# 1. Fork 本项目到你的 GitHub
+# 2. 在 Railway 中连接你的 GitHub 仓库
+# 3. 在 Railway 后台设置以下环境变量：
+#    - WX_APP_ID
+#    - WX_APP_SECRET
+#    - WX_TOKEN
+#    - LLM_API_KEY
+#    - LLM_API_BASE (可选)
+#    - LLM_MODEL (可选)
+# 4. Railway 会自动检测并运行 railway_start.py
 ```
 
-> ⚠️ 注意：Web 微信协议已被腾讯逐步停用，新注册微信号无法使用此方式。
-
----
-
-### 方式三：生成报告后推送微信
-
-```bash
-python start.py --report
-```
+> 本项目自带 `railway_start.py`，已适配 Railway 部署。
 
 ### 指令大全
 
@@ -461,12 +454,11 @@ python start.py --report
 ```
 fund_agent/
 │
-├── wechat_launcher.py       # 📱 itchat 微信聊天启动器（已停用）
 ├── wechat_test_account.py   # 📱 微信测试号 Bot（推荐，无需额外安装）
 ├── launch_wechat_test.sh    # 📱 微信测试号一键启动脚本
-├── botchan/                 # 📱 BotChan 源码（微信测试号 Node.js 版，仅供参考）
 ├── main.py                 # 🚀 主入口，支持控制台/微信/推送三种模式
 ├── start.py                # ⚡ 一键启动脚本（推荐新手使用）
+├── railway_start.py        # 🚄 Railway 云部署专用启动脚本
 ├── config.yaml             # ⚙️ 用户配置文件（需自行创建）
 ├── config.yaml.example     # 📝 配置示例文件
 ├── test_agent.py           # 🧪 模块功能测试脚本
@@ -497,9 +489,12 @@ fund_agent/
 │   ├── __init__.py
 │   └── generator.py        # 报告生成器（格式化输出）
 │
-└── wechat/                 # 💬 交互层
-    ├── __init__.py
-    └── bot.py              # 微信机器人（基于 itchat）
+├── wechat/                 # 💬 交互层
+│   ├── __init__.py
+│   └── bot.py              # 微信机器人（基于 itchat，已停用）
+│
+├── wechat_launcher.py      # 📱 itchat 微信聊天启动器（已停用）
+└── botchan/                # 📱 BotChan 源码（微信测试号 Node.js 版，仅供参考）
 ```
 
 ---
@@ -563,9 +558,6 @@ cp config.yaml.example config.yaml
 # 然后编辑 config.yaml 填写你的持仓信息
 ```
 
-### Q: 微信模式无法登录？
-微信模式依赖 itchat 库使用 Web 微信协议。2023年后部分账号可能无法登录 Web 微信。建议使用控制台模式。
-
 ### Q: 为什么有些基金数据获取不到？
 天天基金 API 在非交易时间可能返回空数据。建议在**交易日 9:30-15:00** 之间使用。
 
@@ -586,6 +578,15 @@ portfolios:
         shares: 8000
 ```
 
+### Q: 报错 "Portfolio 0x106825550 not found" ？
+这是 LangChain 旧版本与 Python 3.11+ 的兼容性问题。如果升级 langchain 后出现此问题，可能是 langchain-core 中某个对象被移除了。解决方案：
+```bash
+# 回退到兼容版本
+pip install langchain==0.2.16 langchain-core==0.2.38 langchain-community==0.2.17
+
+# 或者查看具体 traceback 定位问题模块
+```
+
 ---
 
 ## 🗄️ 数据库表结构
@@ -598,7 +599,7 @@ portfolios:
 |------|------|------|------|
 | `fund_code` | `VARCHAR(10)` | **PK** | 基金代码（6位数字） |
 | `fund_name` | `VARCHAR(100)` | NOT NULL | 基金名称 |
-| `fund_type` | `VARCHAR(50)` | | 基金类型（股票型/混合型/指数型/债券型等） |
+| `fund_type` | `VARCHAR(50)` | | 基金类型 |
 | `fund_company` | `VARCHAR(100)` | | 基金公司 |
 | `manager_name` | `VARCHAR(50)` | | 基金经理姓名 |
 | `establish_date` | `DATE` | | 成立日期 |
@@ -616,11 +617,6 @@ portfolios:
 | `unit_nav` | `DECIMAL(10,4)` | NOT NULL | 单位净值 |
 | `acc_nav` | `DECIMAL(10,4)` | | 累计净值 |
 | `created_at` | `TIMESTAMP` | DEFAULT NOW | 创建时间 |
-
-**索引**：
-- `uk_fund_date` — UNIQUE(`fund_code`, `nav_date`)：防止同一天重复数据
-- `idx_fund_code` — INDEX(`fund_code`)：按基金代码快速查询
-- `idx_nav_date` — INDEX(`nav_date`)：按日期范围查询
 
 ### 3️⃣ `fund_returns` — 基金收益率表
 
@@ -651,20 +647,6 @@ portfolios:
 | `created_at` | `TIMESTAMP` | DEFAULT NOW | 创建时间 |
 | `updated_at` | `TIMESTAMP` | ON UPDATE NOW | 更新时间 |
 
-### ER 关系图
-
-```
-fund_basic_info          fund_nav_history          fund_returns
-      │                       │                        │
-      │ 1                      │ N                      │ 1
-      │◄──────────────────────►│                        │
-      │  fund_code             │  fund_code             │ fund_code
-      │                       │                        │
-      │ 1                      │                        │
-      │◄─────────────────────────────────────────────────│
-      │  fund_code                                        fund_code
-```
-
 ---
 
 ## 🤖 LangChain Agent 架构（新版）
@@ -673,32 +655,32 @@ fund_basic_info          fund_nav_history          fund_returns
 
 ```
 用户输入（控制台/微信）
-        │
-        ▼
-┌─────────────────────────────┐
-│   core/agent.py (兼容层)     │
-│                              │
-│   ├─ 尝试 → core/langchain_agent.py (LangChain Agent)
-│   │          │
-│   │          ├─ LLM (通义千问 qwen-plus / 零一万物 yi-lightning 等)
-│   │          ├─ System Prompt（傲娇猫娘"巧克力"角色）
-│   │          ├─ 10 个工具 (core/tools.py)
-│   │          │   ├─ query_fund_history     → 历史净值走势
-│   │          │   ├─ query_fund_detail      → 基金详细信息
-│   │          │   ├─ query_fund_realtime    → 实时估值
-│   │          │   ├─ search_funds_by_keyword → 搜索基金
-│   │          │   ├─ get_portfolio_report   → 持仓分析报告
-│   │          │   ├─ get_fund_recommendations → 基金推荐
-│   │          │   ├─ analyze_fund_risk      → 风险评估
-│   │          │   ├─ compare_funds          → 多支基金对比
-│   │          │   ├─ calculate_investment   → 定投计算
-│   │          │   └─ get_market_overview    → 市场概况
-│   │          │
-│   │          └─ 多轮对话记忆 (对话历史保留最近20轮)
-│   │
-│   └─ 失败回退 → 旧版规则引擎（意图匹配 + 硬编码回复）
-│
-└─────────────────────────────┘
+        |
+        v
++-----------------------------+
+|   core/agent.py (兼容层)     |
+|                              |
+|   +- 尝试 -> core/langchain_agent.py (LangChain Agent)
+|   |          |
+|   |          +- LLM (通义千问 qwen-plus / 零一万物 yi-lightning 等)
+|   |          +- System Prompt（傲娇猫娘"巧克力"角色）
+|   |          +- 10 个工具 (core/tools.py)
+|   |          |   +- query_fund_history     -> 历史净值走势
+|   |          |   +- query_fund_detail      -> 基金详细信息
+|   |          |   +- query_fund_realtime    -> 实时估值
+|   |          |   +- search_funds_by_keyword -> 搜索基金
+|   |          |   +- get_portfolio_report   -> 持仓分析报告
+|   |          |   +- get_fund_recommendations -> 基金推荐
+|   |          |   +- analyze_fund_risk      -> 风险评估
+|   |          |   +- compare_funds          -> 多支基金对比
+|   |          |   +- calculate_investment   -> 定投计算
+|   |          |   +- get_market_overview    -> 市场概况
+|   |          |
+|   |          +- 多轮对话记忆 (对话历史保留最近20轮)
+|   |
+|   +- 失败回退 -> 旧版规则引擎（意图匹配 + 硬编码回复）
+|
++-----------------------------+
 ```
 
 ### 支持的 LLM 提供商
