@@ -229,35 +229,49 @@ class WeChatTestBot:
     # 最近处理过的消息缓存，用于去重（避免微信重试导致重复处理）
     # 使用类变量 + 锁保证线程安全
     _msg_lock = threading.Lock()
-    _recent_msg_set = set()  # 存储 (fingerprint) 指纹
+    # 正在处理中的消息（防并发重试）
+    _processing_keys = set()
     
     def _is_duplicate_message(self, content: str) -> bool:
         """
         检查是否是重复消息（微信重试机制导致）
-        使用15秒的去重窗口，覆盖同步发送消息的最坏情况
+        使用30秒的去重窗口 + 处理中标记
         """
         import hashlib
         now = time.time()
-        # 生成消息指纹：内容 + 当前秒（允许同一秒内重试去重）
         key = hashlib.md5(content.encode()).hexdigest()
         
         with self._msg_lock:
-            # 清理旧记录：保留最近15秒的指纹
-            # 使用全局类变量来存储
+            # 初始化类变量
             if not hasattr(WeChatTestBot, '_recent_fingerprints'):
                 WeChatTestBot._recent_fingerprints = {}
+                WeChatTestBot._processing_keys = set()
             
-            # 清理超过15秒的记录
+            # 检查是否有正在处理中的相同消息
+            if key in WeChatTestBot._processing_keys:
+                logger.info(f"⏭️ 检测到正在处理中的消息，跳过")
+                return True
+            
+            # 清理超过30秒的记录
             for k in list(WeChatTestBot._recent_fingerprints.keys()):
-                if now - WeChatTestBot._recent_fingerprints[k] > 15:
+                if now - WeChatTestBot._recent_fingerprints[k] > 30:
                     del WeChatTestBot._recent_fingerprints[k]
             
             if key in WeChatTestBot._recent_fingerprints:
-                logger.info(f"⏭️ 检测到重复消息（15秒内），跳过处理")
+                logger.info(f"⏭️ 检测到重复消息（30秒内），跳过处理")
                 return True
             
+            # 标记为正在处理
+            WeChatTestBot._processing_keys.add(key)
             WeChatTestBot._recent_fingerprints[key] = now
             return False
+    
+    def _finish_processing(self, content: str):
+        """处理完成，清除处理中标记"""
+        import hashlib
+        key = hashlib.md5(content.encode()).hexdigest()
+        with self._msg_lock:
+            WeChatTestBot._processing_keys.discard(key)
     
     def _handle_message(self, xml_data: str) -> str:
         """处理微信消息，返回 success"""
@@ -322,6 +336,8 @@ class WeChatTestBot:
                 
             except Exception as e:
                 logger.error(f"❌ 处理消息失败: {e}")
+            finally:
+                self._finish_processing(content)
         
         return "success"
     
