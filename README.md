@@ -2,7 +2,7 @@
 
 > 傲娇猫娘巧克力，你的专属基金小助手喵～ 🐱
 
-通过**控制台**或**微信测试号**与用户对话，提供基金查询、持仓分析、风险评估、基金推荐等功能。
+通过**控制台**、**微信测试号**或 **Railway 云部署**与用户对话，提供基金查询、持仓分析、风险评估、基金推荐等功能。
 
 ---
 
@@ -156,6 +156,21 @@ export LLM_MODEL="qwen-plus"
 python start.py
 ```
 
+### 快速部署 Railway
+
+```bash
+# 1. Fork 本项目到你的 GitHub
+# 2. 在 Railway 中连接你的 GitHub 仓库
+# 3. 在 Railway 后台设置以下环境变量：
+#    - WX_APP_ID
+#    - WX_APP_SECRET
+#    - WX_TOKEN
+#    - LLM_API_KEY
+#    - LLM_API_BASE (可选)
+#    - LLM_MODEL (可选)
+# 4. Railway 会自动检测并运行 railway_start.py
+```
+
 ### 环境变量说明
 
 | 环境变量 | 必填 | 说明 |
@@ -171,6 +186,8 @@ python start.py
 ---
 
 ## 💬 使用指南
+
+支持三种交互方式：
 
 ### 方式一：控制台对话
 
@@ -256,7 +273,24 @@ ngrok http 9000
 
 **完成！** 用微信扫描测试号页面的二维码，关注后就能和巧克力聊天了～ 🐱
 
-> ⚠️ ngrok 免费版每次启动 URL 会变，需要重新回填。想永久使用可以部署到云服务器。
+> ⚠️ ngrok 免费版每次启动 URL 会变，需要重新回填。想永久使用可以用方式三部署到 Railway。
+
+### 方式三：一键部署 Railway
+
+```bash
+# 1. Fork 本项目到你的 GitHub
+# 2. 在 Railway 中连接你的 GitHub 仓库
+# 3. 在 Railway 后台设置以下环境变量：
+#    - WX_APP_ID
+#    - WX_APP_SECRET
+#    - WX_TOKEN
+#    - LLM_API_KEY
+#    - LLM_API_BASE (可选)
+#    - LLM_MODEL (可选)
+# 4. Railway 会自动检测并运行 railway_start.py
+```
+
+> 本项目自带 `railway_start.py`，已适配 Railway 部署，无需额外配置。
 
 ---
 
