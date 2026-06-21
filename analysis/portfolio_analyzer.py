@@ -372,7 +372,13 @@ class PortfolioAnalyzer:
             else:
                 trend = "📉 下行趋势"
         else:
-            trend = "数据不足"
+            # 评分数据不足时，使用总盈亏比例做简单判断
+            if total_profit_pct > 5:
+                trend = "📈 上行趋势"
+            elif total_profit_pct > -5:
+                trend = "➡️ 震荡趋势"
+            else:
+                trend = "📉 下行趋势"
 
         return {
             "收益评价": profit_level,
