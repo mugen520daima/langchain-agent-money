@@ -82,10 +82,43 @@ def _search_fund_code_by_name(keyword: str) -> Optional[str]:
     """
     根据基金名称关键词搜索基金代码
     支持模糊匹配，返回第一个匹配的基金代码
+    如果第一次没搜到，会提取关键部分再次搜索
     """
+    logger.info(f"[DBG] 搜索基金代码，关键词: {keyword}")
     results = search_funds(keyword)
     if results:
+        logger.info(f"[DBG] 搜索成功: {keyword} -> {results[0]['基金代码']} ({results[0]['基金名称']})")
         return results[0]["基金代码"]
+    
+    # 第一次没搜到，提取关键部分再搜
+    # 去除常见后缀和前缀
+    clean_name = keyword.strip()
+    clean_name = re.sub(r'\(QDII\)', '', clean_name)
+    clean_name = re.sub(r'[（(].*?[）)]', '', clean_name)  # 去掉括号内容
+    clean_name = re.sub(r'A$|C$|B$|E$', '', clean_name)
+    clean_name = clean_name.replace('指数', '').replace('混合', '').replace('发起式', '')
+    clean_name = clean_name.strip()
+    
+    if clean_name and clean_name != keyword:
+        logger.info(f"[DBG] 清洗后重试搜索: {clean_name}")
+        results = search_funds(clean_name)
+        if results:
+            logger.info(f"[DBG] 清洗搜索成功: {clean_name} -> {results[0]['基金代码']} ({results[0]['基金名称']})")
+            return results[0]["基金代码"]
+    
+    # 再试：只取前4个中文字作为关键词
+    import re as _re
+    chinese_chars = _re.findall(r'[\u4e00-\u9fff]+', keyword)
+    for chars in chinese_chars:
+        if len(chars) >= 4:
+            short_key = chars[:4]
+            logger.info(f"[DBG] 中文关键词搜索: {short_key}")
+            results = search_funds(short_key)
+            if results:
+                logger.info(f"[DBG] 中文关键词搜索成功: {short_key} -> {results[0]['基金代码']} ({results[0]['基金名称']})")
+                return results[0]["基金代码"]
+    
+    logger.warning(f"[DBG] 所有搜索方式都未找到: {keyword}")
     return None
 
 
@@ -313,16 +346,22 @@ def _get_portfolio_data(user_id: str = "default_user") -> tuple:
     获取用户的持仓配置数据
     优先从数据库读取（含实时市值和盈亏率），数据库不可用时用内存中的配置
     """
+    logger.info(f"[DBG] 查询持仓数据，user_id={user_id}")
+    
     # 先尝试从数据库获取
     db_portfolios = _run_async(_db_manager.get_user_portfolios(user_id))
     if db_portfolios:
+        logger.info(f"[DBG] 从数据库读取到 {len(db_portfolios)} 条持仓: {json.dumps([{'code':f['code'],'name':f.get('name',''),'cost':f.get('cost',0)} for f in db_portfolios], ensure_ascii=False)}")
         funds = db_portfolios
     else:
+        logger.info(f"[DBG] 数据库无持仓数据，检查内存...")
         # 回退到内存配置
         portfolio = _global_portfolios.get(user_id, _global_portfolios.get("default_user"))
         if not portfolio:
+            logger.info(f"[DBG] 内存中也无持仓数据。全局内存持仓keys: {list(_global_portfolios.keys())}")
             return [], {}
         funds = portfolio.get("funds", [])
+        logger.info(f"[DBG] 从内存读取到 {len(funds)} 条持仓: {json.dumps(funds, ensure_ascii=False)}")
     
     holdings_data = []
     all_risk_warnings = {}
@@ -575,9 +614,12 @@ def get_portfolio_report(user_id: str = "default_user") -> str:
     需要用户已配置持仓信息。
     注意：回复中不要显示基金代码。
     """
+    logger.info(f"[DBG] get_portfolio_report 被调用，user_id={user_id}")
     holdings_data, all_risk_warnings = _get_portfolio_data(user_id)
     
+    logger.info(f"[DBG] 持仓查询结果: holdings_data={len(holdings_data)}条, risk_warnings={len(all_risk_warnings)}")
     if not holdings_data:
+        logger.info(f"[DBG] 无持仓数据，返回空报告")
         return "没有找到你的持仓信息，请先告诉我你买了哪些基金。"
     
     # 持仓分析
@@ -913,7 +955,14 @@ def update_user_portfolio(user_id: str, fund_code: str = "", fund_name: str = ""
             logger.info(f"通过名称搜索到基金代码: {fund_name} -> {fund_code}")
     
     if not fund_code:
+        logger.error(f"[DBG] 未找到基金代码，fund_name={fund_name}")
+        # 记录全局持仓状态
+        logger.info(f"[DBG] 当前内存持仓: user_id={user_id}, portfolios_keys={list(_global_portfolios.keys())}")
+        if user_id in _global_portfolios:
+            logger.info(f"[DBG] 用户持仓明细: {json.dumps(_global_portfolios[user_id].get('funds', []), ensure_ascii=False)}")
         return f"无法找到基金「{fund_name}」对应的代码，请输入更准确的基金名称。"
+    
+    logger.info(f"[DBG] 更新持仓: user={user_id}, code={fund_code}, name={fund_name}, cost={cost_amount}, channel={channel}")
     
     # 自动获取基金名称
     if not fund_name:

@@ -288,6 +288,8 @@ class WeChatTestBot:
                 logger.info(f"📄 回复内容: {reply[:300]}")
                 
                 if reply:
+                    logger.info(f"[WX_RESP] 回复给用户 [{from_user[:8]}...] 的完整内容:\n---\n{reply}\n---")
+                    
                     # 先发送"正在输入"状态
                     self._send_typing(from_user)
                     
