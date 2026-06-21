@@ -171,7 +171,8 @@ class DatabaseManager:
         return None
     
     async def save_user_portfolio(self, user_id: str, fund_code: str,
-                                   fund_name: str, cost_amount: float, shares: float) -> bool:
+                                   fund_name: str, cost_amount: float, shares: float,
+                                   channel: str = "") -> bool:
         """保存或更新用户持仓（含实时市值计算）"""
         await self._ensure_db()
         if self._real_db:
@@ -186,7 +187,7 @@ class DatabaseManager:
                 profit_rate = ((current_value - cost_amount) / cost_amount * 100) if cost_amount > 0 else 0
                 
                 return await self._real_db.save_user_portfolio(
-                    user_id, fund_code, fund_name, cost_amount, current_value, profit_rate, shares
+                    user_id, fund_code, fund_name, cost_amount, current_value, profit_rate, shares, channel
                 )
             except Exception as e:
                 print(f"保存持仓失败: {e}")
@@ -339,6 +340,7 @@ def _get_portfolio_data(user_id: str = "default_user") -> tuple:
         metrics = {
             "基金代码": code,
             "基金名称": name,
+            "存储渠道": fund.get("channel", ""),
             "总投入(元)": round(cost, 2),
             "持有份额": shares,
             "当前净值(元)": round(nav, 4),
@@ -876,14 +878,15 @@ class UpdatePortfolioInput(BaseModel):
     user_id: str = Field(default="default_user", description="用户标识")
     fund_code: str = Field(description="基金代码，如 '110011'")
     fund_name: str = Field(default="", description="基金名称（可自动获取）")
-    cost_amount: float = Field(description="总投入金额（元）")
-    shares: float = Field(description="持有份额")
+    cost_amount: float = Field(description="总投入金额（元），如 10000")
+    channel: str = Field(default="", description="存储渠道，如'支付宝'、'天天基金'、'银行'、'微信'等")
 
 @tool(args_schema=UpdatePortfolioInput)
 def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
-                          cost_amount: float = 0, shares: float = 0) -> str:
+                          cost_amount: float = 0, channel: str = "") -> str:
     """
     添加或更新用户的基金持仓信息。
+    用户只需告知投入金额和存储渠道（如支付宝），系统自动根据最新净值计算持有份额。
     如果用户已持有该基金则更新，否则新增。
     数据会持久化到数据库中，并自动计算当前市值和盈亏率。
     注意：回复中不要显示基金代码。
@@ -896,6 +899,15 @@ def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
     
     if not fund_name:
         fund_name = get_fund_basic_info(fund_code).get("基金名称", fund_code) if get_fund_basic_info(fund_code) else fund_code
+    
+    # 获取最新净值，自动计算持有份额
+    from fund_data.fetcher import get_fund_realtime_estimate
+    realtime = get_fund_realtime_estimate(fund_code)
+    nav = 0
+    if realtime:
+        nav = realtime.get("估算净值", 0) or realtime.get("昨日净值", 0)
+    
+    shares = cost_amount / nav if nav > 0 else 0
     
     # 先更新内存
     if user_id not in _global_portfolios:
@@ -912,12 +924,14 @@ def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
         })
     
     # 保存到数据库（内含自动计算当前市值和盈亏率）
-    success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares))
+    success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares, channel))
+    
+    channel_str = f"（存储在{channel}）" if channel else ""
     
     if success:
-        return f"已保存 {fund_name} 的持仓信息（投入{cost_amount:.2f}元，{shares:.2f}份）。"
+        return f"已保存 {fund_name} 的持仓信息（投入{cost_amount:.2f}元）{channel_str}。当前净值{nav:.4f}，持有{shares:.2f}份。"
     else:
-        return f"已记录 {fund_name} 的持仓信息（本地缓存）。"
+        return f"已记录 {fund_name} 的持仓信息（本地缓存）{channel_str}。"
 
 
 class DeletePortfolioInput(BaseModel):

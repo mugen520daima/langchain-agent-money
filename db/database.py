@@ -175,12 +175,13 @@ class DatabaseManager:
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
         );
         
-        -- 用户持仓表（含实时市值和盈亏率）
+        -- 用户持仓表（含实时市值、盈亏率和存储渠道）
         CREATE TABLE IF NOT EXISTS user_portfolios (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
             user_id VARCHAR(50) NOT NULL,
             fund_code VARCHAR(10) NOT NULL,
             fund_name VARCHAR(100),
+            channel VARCHAR(50) DEFAULT '' COMMENT '存储渠道：支付宝、天天基金、银行等',
             cost_amount DECIMAL(20, 4) NOT NULL COMMENT '用户投入成本（元）',
             current_value DECIMAL(20, 4) DEFAULT 0 COMMENT '当前市值（元）',
             profit_rate DECIMAL(10, 4) DEFAULT 0 COMMENT '盈亏比例（%）',
@@ -266,12 +267,12 @@ class DatabaseManager:
     # ========== 用户持仓管理（数据库持久化） ==========
     
     async def get_user_portfolios(self, user_id: str) -> Optional[List[Dict]]:
-        """获取用户在数据库中的持仓（含当前市值和盈亏率）"""
+        """获取用户在数据库中的持仓（含当前市值、盈亏率和存储渠道）"""
         if not self._connected:
             return None
         
         sql = """
-        SELECT fund_code, fund_name, cost_amount, current_value, profit_rate, shares
+        SELECT fund_code, fund_name, channel, cost_amount, current_value, profit_rate, shares
         FROM user_portfolios
         WHERE user_id = %s
         ORDER BY updated_at ASC
@@ -287,10 +288,11 @@ class DatabaseManager:
                             result.append({
                                 "code": row[0],
                                 "name": row[1] or "",
-                                "cost": float(row[2]),
-                                "current_value": float(row[3]) if row[3] else float(row[2]),
-                                "profit_rate": float(row[4]) if row[4] else 0.0,
-                                "shares": float(row[5]),
+                                "channel": row[2] or "",
+                                "cost": float(row[3]),
+                                "current_value": float(row[4]) if row[4] else float(row[3]),
+                                "profit_rate": float(row[5]) if row[5] else 0.0,
+                                "shares": float(row[6]),
                             })
                         return result
             return None
@@ -300,16 +302,18 @@ class DatabaseManager:
     
     async def save_user_portfolio(self, user_id: str, fund_code: str,
                                    fund_name: str, cost_amount: float, 
-                                   current_value: float, profit_rate: float, shares: float):
-        """保存或更新用户持仓（含当前市值和盈亏率）"""
+                                   current_value: float, profit_rate: float, shares: float,
+                                   channel: str = ""):
+        """保存或更新用户持仓（含当前市值、盈亏率和存储渠道）"""
         if not self._connected:
             return False
         
         sql = """
-        INSERT INTO user_portfolios (user_id, fund_code, fund_name, cost_amount, current_value, profit_rate, shares)
-        VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO user_portfolios (user_id, fund_code, fund_name, channel, cost_amount, current_value, profit_rate, shares)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
             fund_name = VALUES(fund_name),
+            channel = VALUES(channel),
             cost_amount = VALUES(cost_amount),
             current_value = VALUES(current_value),
             profit_rate = VALUES(profit_rate),
@@ -318,7 +322,7 @@ class DatabaseManager:
         try:
             async with self._pool.acquire() as conn:
                 async with conn.cursor() as cursor:
-                    await cursor.execute(sql, (user_id, fund_code, fund_name, cost_amount, current_value, profit_rate, shares))
+                    await cursor.execute(sql, (user_id, fund_code, fund_name, channel, cost_amount, current_value, profit_rate, shares))
             return True
         except Exception as e:
             print(f"保存用户持仓失败: {e}")
