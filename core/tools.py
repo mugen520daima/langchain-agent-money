@@ -341,6 +341,19 @@ def _format_history_chart(history: List[Dict], max_points: int = 30) -> str:
     return "\n".join(lines)
 
 
+def _is_today_trading_day() -> bool:
+    """
+    判断今天是否是交易日
+    周末（周六/周日）一定不是交易日，非周末可能是交易日
+    """
+    now = datetime.now()
+    weekday = now.weekday()  # 0=周一, 6=周日
+    if weekday >= 5:  # 周六(5) 或 周日(6)
+        logger.info(f"[DBG] 今天({now.strftime('%Y-%m-%d')})是周末，非交易日")
+        return False
+    return True
+
+
 def _get_portfolio_data(user_id: str = "default_user") -> tuple:
     """
     获取用户的持仓配置数据
@@ -363,6 +376,7 @@ def _get_portfolio_data(user_id: str = "default_user") -> tuple:
         funds = portfolio.get("funds", [])
         logger.info(f"[DBG] 从内存读取到 {len(funds)} 条持仓: {json.dumps(funds, ensure_ascii=False)}")
     
+    is_trading_day = _is_today_trading_day()
     holdings_data = []
     all_risk_warnings = {}
     
@@ -390,6 +404,11 @@ def _get_portfolio_data(user_id: str = "default_user") -> tuple:
             profit_pct = db_profit_rate if db_profit_rate else 0
             nav = current_value / shares if shares > 0 else 0
         
+        # 判断当日涨跌幅：非交易日必须为0
+        daily_change = realtime.get("估算涨跌幅", 0) if realtime else 0
+        if not is_trading_day:
+            daily_change = 0
+        
         metrics = {
             "基金代码": code,
             "基金名称": name,
@@ -400,7 +419,7 @@ def _get_portfolio_data(user_id: str = "default_user") -> tuple:
             "当前市值(元)": round(current_value, 2),
             "盈亏(元)": round(current_value - cost, 2),
             "盈亏比例(%)": round(profit_pct, 2),
-            "当日涨跌幅(%)": realtime.get("估算涨跌幅", 0) if realtime else 0,
+            "当日涨跌幅(%)": daily_change,
             "估值时间": realtime.get("估值时间", "") if realtime else "",
         }
         
@@ -567,6 +586,10 @@ def query_fund_realtime(fund_code: str) -> str:
     estimate_change = info.get("估算涨跌幅", 0)
     yesterday_nav = info.get("昨日净值", 0)
     estimate_time = info.get("估值时间", "")
+    
+    # 非交易日涨跌幅置为0
+    if not _is_today_trading_day():
+        estimate_change = 0
     
     return (
         f"{name} 实时估值：\n"
