@@ -2,7 +2,7 @@
 
 > 傲娇猫娘巧克力，你的专属基金小助手喵～ 🐱
 
-通过**控制台**、**微信测试号**或 **Railway 云部署**与用户对话，提供基金查询、持仓分析、风险评估、基金推荐等功能。
+通过**控制台**或**微信测试号**（需 Railway 部署获取公网地址）与用户对话，提供基金查询、持仓分析、风险评估、基金推荐等功能。
 
 ---
 
@@ -156,21 +156,6 @@ export LLM_MODEL="qwen-plus"
 python start.py
 ```
 
-### 快速部署 Railway
-
-```bash
-# 1. Fork 本项目到你的 GitHub
-# 2. 在 Railway 中连接你的 GitHub 仓库
-# 3. 在 Railway 后台设置以下环境变量：
-#    - WX_APP_ID
-#    - WX_APP_SECRET
-#    - WX_TOKEN
-#    - LLM_API_KEY
-#    - LLM_API_BASE (可选)
-#    - LLM_MODEL (可选)
-# 4. Railway 会自动检测并运行 railway_start.py
-```
-
 ### 环境变量说明
 
 | 环境变量 | 必填 | 说明 |
@@ -187,9 +172,7 @@ python start.py
 
 ## 💬 使用指南
 
-支持三种交互方式：
-
-### 方式一：控制台对话
+### 方式一：控制台对话（本地测试）
 
 ```bash
 python start.py
@@ -235,62 +218,63 @@ python start.py
 ...
 ```
 
-### 方式二：微信测试号
+### 方式二：微信测试号（需要先部署到云端）
 
-使用微信官方**测试号**接口，用你的个人微信关注测试号后，**在微信里直接和巧克力聊天**。
+微信测试号需要一个**公网可访问的 URL** 来接收微信推送的消息。推荐通过 Railway 部署获得公网地址。
 
-#### 配置步骤
+#### 准备工作：部署到 Railway（获得公网 URL）
 
-**第 1 步：开通微信测试号**
-1. 打开 https://mp.weixin.qq.com/debug/cgi-bin/sandbox?t=sandbox/login
-2. 用手机微信扫码登录
-3. 记下页面显示的 **appID** 和 **appsecret**
-
-**第 2 步：启动服务**
-```bash
-cd fund_agent
-bash launch_wechat_test.sh
-```
-按提示输入 appID、appsecret 等信息。
-
-**第 3 步：暴露到公网（用于接收微信消息）**
-```bash
-# 安装 ngrok（内网穿透工具）
-brew install ngrok   # Mac
-# 或从 https://ngrok.com/download 下载
-
-# 启动 ngrok
-ngrok http 9000
-```
-会显示一个公网地址，如 `https://abc123.ngrok.io`
-
-**第 4 步：填写测试号后台**
-1. 回到测试号页面：https://mp.weixin.qq.com/debug/cgi-bin/sandbox
-2. 找到 **接口配置信息** → 点击「修改」
-3. URL 填：`https://你的ngrok地址/wechat`（如 `https://abc123.ngrok.io/wechat`）
-4. Token 填你刚才输入的 Token（如 `fundagent123`）
-5. 点击提交，显示「配置成功」
-
-**完成！** 用微信扫描测试号页面的二维码，关注后就能和巧克力聊天了～ 🐱
-
-> ⚠️ ngrok 免费版每次启动 URL 会变，需要重新回填。想永久使用可以用方式三部署到 Railway。
-
-### 方式三：一键部署 Railway
+Railway 是一个云部署平台，免费额度足够运行本项目。
 
 ```bash
 # 1. Fork 本项目到你的 GitHub
-# 2. 在 Railway 中连接你的 GitHub 仓库
-# 3. 在 Railway 后台设置以下环境变量：
-#    - WX_APP_ID
-#    - WX_APP_SECRET
-#    - WX_TOKEN
-#    - LLM_API_KEY
-#    - LLM_API_BASE (可选)
-#    - LLM_MODEL (可选)
-# 4. Railway 会自动检测并运行 railway_start.py
+# 2. 注册 Railway 账号（railway.app），用 GitHub 登录
+# 3. 在 Railway Dashboard 点击「New Project」→「Deploy from GitHub repo」
+#    选择你 fork 的项目
+# 4. 在 Railway 项目后台设置以下环境变量：
+#    - WX_APP_ID       （微信测试号 appID）
+#    - WX_APP_SECRET   （微信测试号 appSecret）
+#    - WX_TOKEN        （自定义，如 fundagent123）
+#    - LLM_API_KEY     （通义千问或其他 LLM 的 API Key）
+#    - LLM_API_BASE    （可选，默认通义千问）
+#    - LLM_MODEL       （可选，默认 qwen-plus）
+# 5. 部署完成后，Railway 会给你一个公网域名，如：
+#    https://fund-agent-production.up.railway.app
 ```
 
-> 本项目自带 `railway_start.py`，已适配 Railway 部署，无需额外配置。
+> 本项目自带 `railway_start.py`，Railway 会自动检测并运行，无需额外配置。
+>
+> **⚠️ 注意**：Railway 免费版服务每月有运行时长限制（约 500 小时），且一段时间无访问会休眠。如果想长期使用，建议绑定信用卡获得额外额度。
+
+#### 配置微信测试号
+
+**第 1 步：开通测试号**
+1. 打开 https://mp.weixin.qq.com/debug/cgi-bin/sandbox?t=sandbox/login
+2. 用手机微信扫码登录
+3. 记下页面显示的 **appID** 和 **appsecret**（后续填入 Railway 环境变量）
+
+**第 2 步：回填 URL 到测试号后台**
+1. 回到测试号页面：https://mp.weixin.qq.com/debug/cgi-bin/sandbox
+2. 找到 **接口配置信息** → 点击「修改」
+3. URL 填你的 Railway 域名 + `/wechat`，如：
+   ```
+   https://fund-agent-production.up.railway.app/wechat
+   ```
+4. Token 填你在 Railway 环境变量中设置的 `WX_TOKEN`（如 `fundagent123`）
+5. 点击提交，显示「配置成功」即完成
+
+**完成！** 🎉 用微信扫描测试号页面的二维码，关注测试号后发送消息，就能和巧克力在微信里聊天了～ 🐱
+
+> **本地开发调试**：如果你不想部署到 Railway，也可以用 ngrok 将本地服务临时暴露到公网：
+> ```bash
+> # 终端 1：启动本地服务
+> bash launch_wechat_test.sh
+> 
+> # 终端 2：启动 ngrok 内网穿透
+> ngrok http 9000
+> # 会得到一个 https://xxxx.ngrok.io 地址，填到测试号后台即可
+> ```
+> ngrok 免费版每次启动 URL 会变，适合临时调试使用。
 
 ---
 
