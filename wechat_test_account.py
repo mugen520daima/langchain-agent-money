@@ -310,7 +310,9 @@ class WeChatTestBot:
                     # 发起后台线程发送消息，但先立即返回 success
                     def _send_reply(reply_text, to_user):
                         try:
-                            chunk_size = 1800
+                            # 微信客服消息限制 2048 字节，中文字符每字约 3 字节
+                            # 安全起见每块不超过 600 字符（约 1800 字节）
+                            chunk_size = 600
                             for i in range(0, len(reply_text), chunk_size):
                                 chunk = reply_text[i:i + chunk_size]
                                 if i + chunk_size < len(reply_text):

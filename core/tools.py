@@ -682,7 +682,7 @@ def get_portfolio_report(user_id: str = "default_user") -> str:
         portfolio_analysis=portfolio_result,
         risk_warnings=all_risk_warnings,
         recommendations=recommendations,
-        user_name=user_id,
+        user_name="用户",
     )
     
     # 隐藏代码
