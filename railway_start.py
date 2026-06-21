@@ -53,7 +53,7 @@ config = {
         "api_key": llm_key,
         "api_base": os.getenv("LLM_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
         "model": os.getenv("LLM_MODEL", "qwen-plus"),
-        "temperature": 0.8,
+        "temperature": 0.3,
         "verbose": True,
     },
     "wechat_test": {

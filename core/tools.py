@@ -44,6 +44,9 @@ from report.generator import ReportGenerator
 from langchain_core.tools import BaseTool, tool
 from pydantic import BaseModel, Field
 
+import logging
+logger = logging.getLogger("FundTools")
+
 # ============================================================
 # 全局分析引擎实例（可复用）
 # ============================================================
@@ -73,6 +76,17 @@ def _get_fund_name(fund_code: str) -> str:
     if info:
         return info.get("基金名称", fund_code)
     return fund_code
+
+
+def _search_fund_code_by_name(keyword: str) -> Optional[str]:
+    """
+    根据基金名称关键词搜索基金代码
+    支持模糊匹配，返回第一个匹配的基金代码
+    """
+    results = search_funds(keyword)
+    if results:
+        return results[0]["基金代码"]
+    return None
 
 
 # ============================================================
@@ -876,13 +890,13 @@ def get_market_overview(category: str = "all") -> str:
 
 class UpdatePortfolioInput(BaseModel):
     user_id: str = Field(default="default_user", description="用户标识")
-    fund_code: str = Field(description="基金代码，如 '110011'")
-    fund_name: str = Field(default="", description="基金名称（可自动获取）")
+    fund_code: str = Field(default="", description="基金代码，如 '110011'。如果不知道代码，可传空字符串，通过fund_name自动搜索")
+    fund_name: str = Field(default="", description="基金名称，如'易方达优质精选混合'。如果知道基金代码可以直接传代码，名称留空")
     cost_amount: float = Field(description="总投入金额（元），如 10000")
     channel: str = Field(default="", description="存储渠道，如'支付宝'、'天天基金'、'银行'、'微信'等")
 
 @tool(args_schema=UpdatePortfolioInput)
-def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
+def update_user_portfolio(user_id: str, fund_code: str = "", fund_name: str = "",
                           cost_amount: float = 0, channel: str = "") -> str:
     """
     添加或更新用户的基金持仓信息。
@@ -891,6 +905,16 @@ def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
     数据会持久化到数据库中，并自动计算当前市值和盈亏率。
     注意：回复中不要显示基金代码。
     """
+    # 如果只有基金名称没有代码，尝试搜索代码
+    if not fund_code and fund_name:
+        searched_code = _search_fund_code_by_name(fund_name)
+        if searched_code:
+            fund_code = searched_code
+            logger.info(f"通过名称搜索到基金代码: {fund_name} -> {fund_code}")
+    
+    if not fund_code:
+        return f"无法找到基金「{fund_name}」对应的代码，请输入更准确的基金名称。"
+    
     # 自动获取基金名称
     if not fund_name:
         info = _get_fund_data(fund_code)
@@ -898,7 +922,11 @@ def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
             fund_name = info.get("基金名称", "")
     
     if not fund_name:
-        fund_name = get_fund_basic_info(fund_code).get("基金名称", fund_code) if get_fund_basic_info(fund_code) else fund_code
+        basic = get_fund_basic_info(fund_code)
+        if basic:
+            fund_name = basic.get("基金名称", fund_code)
+        else:
+            fund_name = fund_code
     
     # 获取最新净值，自动计算持有份额
     from fund_data.fetcher import get_fund_realtime_estimate

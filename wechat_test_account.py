@@ -226,6 +226,29 @@ class WeChatTestBot:
 <Content><![CDATA[{content}]]></Content>
 </xml>"""
     
+    # 最近处理过的消息缓存，用于去重（避免微信重试导致重复处理）
+    _recent_messages = {}  # {content_timestamp: count}
+    
+    def _is_duplicate_message(self, content: str) -> bool:
+        """检查是否是重复消息（微信重试机制导致）"""
+        import hashlib
+        now = time.time()
+        # 生成消息指纹
+        key = hashlib.md5(content.encode()).hexdigest()
+        
+        # 清理5秒前的记录
+        for k in list(self._recent_messages.keys()):
+            if now - self._recent_messages[k] > 5:
+                del self._recent_messages[k]
+        
+        if key in self._recent_messages:
+            # 5秒内重复消息，跳过
+            logger.info(f"⏭️ 检测到重复消息（5秒内），跳过处理")
+            return True
+        
+        self._recent_messages[key] = now
+        return False
+    
     def _handle_message(self, xml_data: str) -> str:
         """处理微信消息，返回 success"""
         msg = self._parse_xml(xml_data)
@@ -242,6 +265,10 @@ class WeChatTestBot:
             logger.info(f"⏭️ 跳过非文本消息: {msg_type}")
             return "success"
         
+        # 去重检查：微信可能在未收到客服消息时重试POST
+        if not content or self._is_duplicate_message(content):
+            return "success"
+        
         # 如果有 Agent，用 Agent 处理
         if self.agent:
             try:
@@ -254,25 +281,23 @@ class WeChatTestBot:
                     # 先发送"正在输入"状态
                     self._send_typing(from_user)
                     
-                    # 异步发送客服消息（微信需要在5秒内响应 success）
-                    def process_and_reply():
-                        # 分段发送（微信限制每条 2048 字符）
-                        chunk_size = 1800
-                        for i in range(0, len(reply), chunk_size):
-                            chunk = reply[i:i + chunk_size]
-                            if i + chunk_size < len(reply):
-                                chunk += "…"
-                            result = self._send_message(from_user, chunk)
-                            logger.info(f"📤 发送消息块 {i//chunk_size + 1}: {'✅' if result else '❌'}")
-                            if not result:
-                                logger.warning(f"⚠️ 消息块 {i//chunk_size + 1} 发送失败")
+                    # 改为同步发送消息（不再异步）
+                    # 原因：异步发送时微信可能因未收到客服消息而重试POST，导致重复处理
+                    chunk_size = 1800
+                    for i in range(0, len(reply), chunk_size):
+                        chunk = reply[i:i + chunk_size]
+                        if i + chunk_size < len(reply):
+                            chunk += "…"
+                        result = self._send_message(from_user, chunk)
+                        logger.info(f"📤 发送消息块 {i//chunk_size + 1}: {'✅' if result else '❌'}")
+                        if not result:
+                            logger.warning(f"⚠️ 消息块 {i//chunk_size + 1} 发送失败，重试...")
                             time.sleep(0.5)
+                            result = self._send_message(from_user, chunk)
+                            logger.info(f"📤 重试: { '✅' if result else '❌'}")
+                        time.sleep(0.3)
                     
-                    thread = threading.Thread(target=process_and_reply)
-                    thread.daemon = True
-                    thread.start()
-                    
-                    logger.info(f"📤 已返回 success，异步发送客服消息")
+                    logger.info(f"📤 消息发送完成")
                 else:
                     logger.warning("⚠️ Agent返回了空回复")
                 
