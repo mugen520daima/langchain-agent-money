@@ -23,6 +23,8 @@ import os
 import sys
 import json
 import re
+import asyncio
+import threading
 
 # 添加项目根路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -277,7 +279,6 @@ def _get_shared_loop():
 def _run_async(coro):
     """同步方式运行异步协程（线程安全，使用共享事件循环）"""
     try:
-        import asyncio
         loop = _get_shared_loop()
         future = asyncio.run_coroutine_threadsafe(coro, loop)
         return future.result(timeout=30)
