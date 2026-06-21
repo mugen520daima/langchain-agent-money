@@ -255,14 +255,26 @@ _db_manager = DatabaseManager()
 
 
 def _run_async(coro):
-    """同步方式运行异步协程"""
+    """同步方式运行异步协程（使用共享事件循环，避免跨循环数据库连接问题）"""
     try:
         import asyncio
-        loop = asyncio.new_event_loop()
+        # 使用共享事件循环，避免每次创建新循环导致数据库连接池失效
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_closed():
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
         result = loop.run_until_complete(coro)
-        loop.close()
         return result
-    except Exception:
+    except Exception as e:
+        print(f"_run_async 错误: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 
