@@ -31,7 +31,6 @@ from fund_data.fetcher import (
     get_fund_comprehensive_info,
     get_fund_realtime_estimate,
     get_fund_basic_info,
-    compute_investment_metrics,
     get_recommended_funds,
     search_funds,
     get_fund_detail,
@@ -162,7 +161,7 @@ class DatabaseManager:
     # ---------- 用户持仓 ----------
     
     async def get_user_portfolios(self, user_id: str) -> Optional[List[Dict]]:
-        """获取用户在数据库中的持仓"""
+        """获取用户在数据库中的持仓（含实时市值和盈亏率）"""
         await self._ensure_db()
         if self._real_db:
             try:
@@ -173,12 +172,24 @@ class DatabaseManager:
     
     async def save_user_portfolio(self, user_id: str, fund_code: str,
                                    fund_name: str, cost_amount: float, shares: float) -> bool:
-        """保存或更新用户持仓"""
+        """保存或更新用户持仓（含实时市值计算）"""
         await self._ensure_db()
         if self._real_db:
             try:
-                return await self._real_db.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares)
-            except Exception:
+                # 获取最新净值计算当前市值
+                from fund_data.fetcher import get_fund_realtime_estimate
+                info = get_fund_realtime_estimate(fund_code)
+                nav = 0
+                if info:
+                    nav = info.get("估算净值", 0) or info.get("昨日净值", 0)
+                current_value = shares * nav if nav > 0 else cost_amount
+                profit_rate = ((current_value - cost_amount) / cost_amount * 100) if cost_amount > 0 else 0
+                
+                return await self._real_db.save_user_portfolio(
+                    user_id, fund_code, fund_name, cost_amount, current_value, profit_rate, shares
+                )
+            except Exception as e:
+                print(f"保存持仓失败: {e}")
                 pass
         return False
     
@@ -285,7 +296,7 @@ def _format_history_chart(history: List[Dict], max_points: int = 30) -> str:
 def _get_portfolio_data(user_id: str = "default_user") -> tuple:
     """
     获取用户的持仓配置数据
-    优先从数据库读取，数据库不可用时用内存中的配置
+    优先从数据库读取（含实时市值和盈亏率），数据库不可用时用内存中的配置
     """
     # 先尝试从数据库获取
     db_portfolios = _run_async(_db_manager.get_user_portfolios(user_id))
@@ -307,8 +318,36 @@ def _get_portfolio_data(user_id: str = "default_user") -> tuple:
         cost = fund.get("cost", 0)
         shares = fund.get("shares", 0)
         
-        # 获取持仓指标
-        metrics = compute_investment_metrics(code, cost, shares)
+        # 优先使用数据库已计算好的当前市值和盈亏率
+        db_current_value = fund.get("current_value")
+        db_profit_rate = fund.get("profit_rate")
+        
+        # 获取最新实时数据计算最新市值
+        from fund_data.fetcher import get_fund_realtime_estimate
+        realtime = get_fund_realtime_estimate(code)
+        if realtime:
+            nav = realtime.get("估算净值", 0) or realtime.get("昨日净值", 0)
+            current_value = shares * nav if nav > 0 else (db_current_value or cost)
+            profit = current_value - cost
+            profit_pct = (profit / cost * 100) if cost > 0 else 0
+        else:
+            # 使用数据库存的值或回退到投入成本
+            current_value = db_current_value if db_current_value else cost
+            profit_pct = db_profit_rate if db_profit_rate else 0
+            nav = current_value / shares if shares > 0 else 0
+        
+        metrics = {
+            "基金代码": code,
+            "基金名称": name,
+            "总投入(元)": round(cost, 2),
+            "持有份额": shares,
+            "当前净值(元)": round(nav, 4),
+            "当前市值(元)": round(current_value, 2),
+            "盈亏(元)": round(current_value - cost, 2),
+            "盈亏比例(%)": round(profit_pct, 2),
+            "当日涨跌幅(%)": realtime.get("估算涨跌幅", 0) if realtime else 0,
+            "估值时间": realtime.get("估值时间", "") if realtime else "",
+        }
         
         # 获取综合信息
         info = _get_fund_data(code)
@@ -846,7 +885,7 @@ def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
     """
     添加或更新用户的基金持仓信息。
     如果用户已持有该基金则更新，否则新增。
-    数据会持久化到数据库中。
+    数据会持久化到数据库中，并自动计算当前市值和盈亏率。
     注意：回复中不要显示基金代码。
     """
     # 自动获取基金名称
@@ -872,11 +911,11 @@ def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
             "code": fund_code, "name": fund_name, "cost": cost_amount, "shares": shares,
         })
     
-    # 保存到数据库
+    # 保存到数据库（内含自动计算当前市值和盈亏率）
     success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares))
     
     if success:
-        return f"已保存 {fund_name} 的持仓信息（成本{cost_amount:.2f}元，{shares:.2f}份）。"
+        return f"已保存 {fund_name} 的持仓信息（投入{cost_amount:.2f}元，{shares:.2f}份）。"
     else:
         return f"已记录 {fund_name} 的持仓信息（本地缓存）。"
 
