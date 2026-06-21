@@ -293,22 +293,30 @@ class WeChatTestBot:
                     # 先发送"正在输入"状态
                     self._send_typing(from_user)
                     
-                    # 同步发送消息（不再异步）
-                    chunk_size = 1800
-                    for i in range(0, len(reply), chunk_size):
-                        chunk = reply[i:i + chunk_size]
-                        if i + chunk_size < len(reply):
-                            chunk += "…"
-                        result = self._send_message(from_user, chunk)
-                        logger.info(f"📤 发送消息块 {i//chunk_size + 1}: {'✅' if result else '❌'}")
-                        if not result:
-                            logger.warning(f"⚠️ 消息块 {i//chunk_size + 1} 发送失败，重试...")
-                            time.sleep(0.5)
-                            result = self._send_message(from_user, chunk)
-                            logger.info(f"📤 重试: { '✅' if result else '❌'}")
-                        time.sleep(0.3)
+                    # 发起后台线程发送消息，但先立即返回 success
+                    def _send_reply(reply_text, to_user):
+                        try:
+                            chunk_size = 1800
+                            for i in range(0, len(reply_text), chunk_size):
+                                chunk = reply_text[i:i + chunk_size]
+                                if i + chunk_size < len(reply_text):
+                                    chunk += "…"
+                                result = self._send_message(to_user, chunk)
+                                logger.info(f"📤 发送消息块 {i//chunk_size + 1}: {'✅' if result else '❌'}")
+                                if not result:
+                                    logger.warning(f"⚠️ 消息块 {i//chunk_size + 1} 发送失败，重试...")
+                                    time.sleep(0.5)
+                                    result = self._send_message(to_user, chunk)
+                                    logger.info(f"📤 重试: { '✅' if result else '❌'}")
+                                time.sleep(0.3)
+                            logger.info(f"📤 消息发送完成")
+                        except Exception as e:
+                            logger.error(f"❌ 异步发送消息异常: {e}")
                     
-                    logger.info(f"📤 消息发送完成")
+                    import threading
+                    send_thread = threading.Thread(target=_send_reply, args=(reply, from_user))
+                    send_thread.daemon = True
+                    send_thread.start()
                 else:
                     logger.warning("⚠️ Agent返回了空回复")
                 

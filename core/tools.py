@@ -1005,8 +1005,8 @@ def update_user_portfolio(user_id: str, fund_code: str = "", fund_name: str = ""
             "code": fund_code, "name": fund_name, "cost": cost_amount, "shares": shares, "channel": channel,
         })
     
-    # 保存到数据库
-    success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, current_value, profit_rate, shares, channel))
+    # 保存到数据库（tools.DatabaseManager内部会自动计算current_value和profit_rate）
+    success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares, channel))
     
     channel_str = f"（存储在{channel}）" if channel else ""
     
