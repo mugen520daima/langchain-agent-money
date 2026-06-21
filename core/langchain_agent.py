@@ -229,12 +229,16 @@ class FundLangChainAgent:
             error_msg = str(e)
             print(f"Agent处理出错: {error_msg}")
             
-            # 尝试降级处理 - 直接调用LLM
+            # 降级处理 - 直接返回友好提示，不暴露错误信息给用户
             try:
                 fallback_response = self._fallback_chat(message, user_id)
-                return fallback_response
-            except Exception as fallback_e:
-                return f"出错了: {error_msg}"
+                if fallback_response and not fallback_response.startswith("出错了"):
+                    return fallback_response
+            except Exception:
+                pass
+            
+            # 所有尝试都失败，返回友好的降级提示
+            return "巧克力正在忙，请再问一次吧～"
     
     def _fallback_chat(self, message: str, user_id: str = "default_user") -> str:
         """降级处理：直接调用LLM对话"""
