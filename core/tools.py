@@ -383,20 +383,14 @@ def _get_portfolio_data(user_id: str = "default_user") -> tuple:
     """
     logger.info(f"[DBG] 查询持仓数据，user_id={user_id}")
     
-    # 先尝试从数据库获取
+    # 从数据库获取
     db_portfolios = _run_async(_db_manager.get_user_portfolios(user_id))
     if db_portfolios:
         logger.info(f"[DBG] 从数据库读取到 {len(db_portfolios)} 条持仓: {json.dumps([{'code':f['code'],'name':f.get('name',''),'cost':f.get('cost',0)} for f in db_portfolios], ensure_ascii=False)}")
         funds = db_portfolios
     else:
-        logger.info(f"[DBG] 数据库无持仓数据，检查内存...")
-        # 回退到内存配置
-        portfolio = _global_portfolios.get(user_id, _global_portfolios.get("default_user"))
-        if not portfolio:
-            logger.info(f"[DBG] 内存中也无持仓数据。全局内存持仓keys: {list(_global_portfolios.keys())}")
-            return [], {}
-        funds = portfolio.get("funds", [])
-        logger.info(f"[DBG] 从内存读取到 {len(funds)} 条持仓: {json.dumps(funds, ensure_ascii=False)}")
+        logger.info(f"[DBG] 数据库无持仓数据")
+        return [], {}
     
     is_trading_day = _is_today_trading_day()
     holdings_data = []
@@ -1035,30 +1029,13 @@ def update_user_portfolio(user_id: str, fund_code: str = "", fund_name: str = ""
     current_value = shares * nav if nav > 0 else cost_amount
     profit_rate = ((current_value - cost_amount) / cost_amount * 100) if cost_amount > 0 else 0
     
-    # 先更新内存
-    if user_id not in _global_portfolios:
-        _global_portfolios[user_id] = {"funds": []}
-    
-    existing = [f for f in _global_portfolios[user_id]["funds"] if f["code"] == fund_code]
-    if existing:
-        existing[0]["cost"] = cost_amount
-        existing[0]["shares"] = shares
-        existing[0]["name"] = fund_name
-        existing[0]["channel"] = channel
-    else:
-        _global_portfolios[user_id]["funds"].append({
-            "code": fund_code, "name": fund_name, "cost": cost_amount, "shares": shares, "channel": channel,
-        })
-    
-    # 保存到数据库（tools.DatabaseManager内部会自动计算current_value和profit_rate）
+    # 保存到数据库
     success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares, channel))
-    
-    channel_str = f"（存储在{channel}）" if channel else ""
     
     if success:
         return f"已保存 {fund_name} 的持仓信息（投入{cost_amount:.2f}元）。当前净值{nav:.4f}，持有{shares:.2f}份。"
     else:
-        return f"已记录 {fund_name} 的持仓信息。"
+        raise Exception("数据库保存失败")
 
 
 class DeletePortfolioInput(BaseModel):
