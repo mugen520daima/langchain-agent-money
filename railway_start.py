@@ -47,6 +47,10 @@ print(f"✅ WX_APP_ID: {os.getenv('WX_APP_ID')[:6]}...")
 print(f"✅ WX_APP_SECRET: {os.getenv('WX_APP_SECRET')[:6]}...")
 sys.stdout.flush()
 
+# 数据库配置（从环境变量读取，TiDB Serverless）
+db_url = os.getenv("DATABASE_URL", "")
+db_enabled = bool(db_url)
+
 # 构建配置
 config = {
     "llm": {
@@ -56,6 +60,10 @@ config = {
         "temperature": 0.3,
         "verbose": True,
     },
+    "database": {
+        "enabled": db_enabled,
+        "url": db_url,
+    },
     "wechat_test": {
         "app_id": os.getenv("WX_APP_ID"),
         "app_secret": os.getenv("WX_APP_SECRET"),
@@ -63,6 +71,13 @@ config = {
         "port": int(os.getenv("PORT", 9000)),
     }
 }
+
+if db_enabled:
+    print(f"✅ DATABASE_URL 已设置，数据库功能已启用")
+else:
+    print(f"⚠️ 未设置 DATABASE_URL，持仓数据仅保存在内存中，重启后会丢失")
+    print(f"   如需持久化，请在 Railway 后台设置 DATABASE_URL 环境变量（TiDB Serverless 连接字符串）")
+sys.stdout.flush()
 
 print(f"📦 模型: {config['llm']['model']}")
 print(f"📦 端口: {config['wechat_test']['port']}")
