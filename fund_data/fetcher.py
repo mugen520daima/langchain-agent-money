@@ -336,6 +336,7 @@ def get_fund_returns(fund_code: str) -> Optional[Dict[str, float]]:
 def _get_returns_from_eastmoney(fund_code: str) -> Optional[Dict[str, float]]:
     """
     使用东方财富基金排行接口获取各阶段收益率
+    如果主接口返回数据为空，则用 pingzhongdata 的历史净值自行计算
     """
     url = "https://fund.eastmoney.com/api/FundGuV40Api.ashx"
     params = {
@@ -346,25 +347,25 @@ def _get_returns_from_eastmoney(fund_code: str) -> Optional[Dict[str, float]]:
     }
     resp = _request(url, params)
     if not resp:
-        return None
+        return _calc_returns_from_history(fund_code)
 
     try:
         text = resp.text
         # 提取JSON数据
         json_match = re.search(r'jQuery\d+\((\{.+})\)', text)
         if not json_match:
-            return None
+            return _calc_returns_from_history(fund_code)
         data = json.loads(json_match.group(1))
 
         if data.get("ErrCode") != 0:
-            return None
+            return _calc_returns_from_history(fund_code)
 
         datas = data.get("Data", [])
         if not datas:
-            return None
+            return _calc_returns_from_history(fund_code)
 
         fund_data = datas[0]
-        return {
+        returns = {
             "近1月": float(fund_data.get("SYL_JZ", 0)),
             "近3月": float(fund_data.get("SYL_3Y", 0)),
             "近6月": float(fund_data.get("SYL_6Y", 0)),
@@ -377,9 +378,104 @@ def _get_returns_from_eastmoney(fund_code: str) -> Optional[Dict[str, float]]:
             "单位净值": float(fund_data.get("NAV", 0)),
             "累计净值": float(fund_data.get("ACCUM_NAV", 0)),
         }
+        # 如果主接口返回了有效数据，直接使用
+        if returns.get("近1月") != 0 or returns.get("近3月") != 0 or returns.get("近1年") != 0:
+            return returns
+        
+        return _calc_returns_from_history(fund_code)
     except Exception as e:
         print(f"从东方财富接口获取收益率失败 [{fund_code}]: {e}")
-    return None
+        return _calc_returns_from_history(fund_code)
+
+
+def _calc_returns_from_history(fund_code: str) -> Optional[Dict[str, float]]:
+    """
+    备用方案：从 pingzhongdata 历史净值数据自行计算各阶段收益率
+    周末/非交易日也能获取到完整的历史净值数据
+    """
+    try:
+        url = f"https://fund.eastmoney.com/pingzhongdata/{fund_code}.js"
+        resp = _request(url)
+        if not resp:
+            return None
+        
+        text = resp.text
+        match = re.search(r'Data_netWorthTrend\s*=\s*(\[[\s\S]*?\])\s*;', text)
+        if not match:
+            return None
+        
+        raw = match.group(1).replace("null", "0").replace("},]", "}]")
+        data = json.loads(raw)
+        
+        # 解析历史净值
+        navs = []
+        for item in data:
+            if isinstance(item, dict):
+                ts = item.get("x", 0)
+                if isinstance(ts, (int, float)):
+                    ts = ts / 1000
+                dt = datetime.fromtimestamp(ts)
+                navs.append({
+                    "date": dt.strftime("%Y-%m-%d"),
+                    "nav": item.get("y", 0),
+                })
+        
+        if len(navs) < 2:
+            return None
+        
+        # 按日期升序
+        navs.sort(key=lambda x: x["date"])
+        latest_nav = navs[-1]["nav"]
+        latest_date = navs[-1]["date"]
+        latest_dt = datetime.strptime(latest_date, "%Y-%m-%d")
+        
+        # 定义各阶段的回溯天数
+        periods = [
+            ("近1月", 30),
+            ("近3月", 90),
+            ("近6月", 180),
+            ("近1年", 365),
+            ("近2年", 730),
+            ("近3年", 1095),
+        ]
+        
+        result = {
+            "日涨跌幅": 0,
+            "单位净值": latest_nav,
+            "累计净值": latest_nav,
+        }
+        
+        for period_name, days in periods:
+            target_dt = latest_dt - timedelta(days=days)
+            closest = min(navs, key=lambda x: abs(
+                (datetime.strptime(x["date"], "%Y-%m-%d") - target_dt).days
+            ))
+            nav_then = closest["nav"]
+            ret = (latest_nav - nav_then) / nav_then * 100
+            
+            key_map = {
+                "近1月": "近1月", "近3月": "近3月", "近6月": "近6月",
+                "近1年": "近1年", "近2年": "近2年", "近3年": "近3年",
+            }
+            result[key_map[period_name]] = round(ret, 2)
+        
+        # 计算"今年以来"
+        year_start = datetime(latest_dt.year, 1, 1)
+        closest_ys = min(navs, key=lambda x: abs(
+            (datetime.strptime(x["date"], "%Y-%m-%d") - year_start).days
+        ))
+        ret_ys = (latest_nav - closest_ys["nav"]) / closest_ys["nav"] * 100
+        result["今年以来"] = round(ret_ys, 2)
+        
+        # 计算"成立以来"
+        ret_since = (latest_nav - navs[0]["nav"]) / navs[0]["nav"] * 100
+        result["成立以来"] = round(ret_since, 2)
+        
+        print(f"[备用API] 通过历史净值计算 {fund_code} 各阶段收益率成功")
+        return result
+    except Exception as e:
+        print(f"通过历史净值计算收益率失败 [{fund_code}]: {e}")
+        return None
 
 
 def get_fund_grades(fund_code: str) -> Optional[Dict]:
