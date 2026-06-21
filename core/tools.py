@@ -937,6 +937,10 @@ def update_user_portfolio(user_id: str, fund_code: str = "", fund_name: str = ""
     
     shares = cost_amount / nav if nav > 0 else 0
     
+    # 计算当前市值和盈亏率
+    current_value = shares * nav if nav > 0 else cost_amount
+    profit_rate = ((current_value - cost_amount) / cost_amount * 100) if cost_amount > 0 else 0
+    
     # 先更新内存
     if user_id not in _global_portfolios:
         _global_portfolios[user_id] = {"funds": []}
@@ -946,13 +950,14 @@ def update_user_portfolio(user_id: str, fund_code: str = "", fund_name: str = ""
         existing[0]["cost"] = cost_amount
         existing[0]["shares"] = shares
         existing[0]["name"] = fund_name
+        existing[0]["channel"] = channel
     else:
         _global_portfolios[user_id]["funds"].append({
-            "code": fund_code, "name": fund_name, "cost": cost_amount, "shares": shares,
+            "code": fund_code, "name": fund_name, "cost": cost_amount, "shares": shares, "channel": channel,
         })
     
-    # 保存到数据库（内含自动计算当前市值和盈亏率）
-    success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares, channel))
+    # 保存到数据库
+    success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, current_value, profit_rate, shares, channel))
     
     channel_str = f"（存储在{channel}）" if channel else ""
     

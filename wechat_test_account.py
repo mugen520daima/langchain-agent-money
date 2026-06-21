@@ -227,27 +227,37 @@ class WeChatTestBot:
 </xml>"""
     
     # 最近处理过的消息缓存，用于去重（避免微信重试导致重复处理）
-    _recent_messages = {}  # {content_timestamp: count}
+    # 使用类变量 + 锁保证线程安全
+    _msg_lock = threading.Lock()
+    _recent_msg_set = set()  # 存储 (fingerprint) 指纹
     
     def _is_duplicate_message(self, content: str) -> bool:
-        """检查是否是重复消息（微信重试机制导致）"""
+        """
+        检查是否是重复消息（微信重试机制导致）
+        使用15秒的去重窗口，覆盖同步发送消息的最坏情况
+        """
         import hashlib
         now = time.time()
-        # 生成消息指纹
+        # 生成消息指纹：内容 + 当前秒（允许同一秒内重试去重）
         key = hashlib.md5(content.encode()).hexdigest()
         
-        # 清理5秒前的记录
-        for k in list(self._recent_messages.keys()):
-            if now - self._recent_messages[k] > 5:
-                del self._recent_messages[k]
-        
-        if key in self._recent_messages:
-            # 5秒内重复消息，跳过
-            logger.info(f"⏭️ 检测到重复消息（5秒内），跳过处理")
-            return True
-        
-        self._recent_messages[key] = now
-        return False
+        with self._msg_lock:
+            # 清理旧记录：保留最近15秒的指纹
+            # 使用全局类变量来存储
+            if not hasattr(WeChatTestBot, '_recent_fingerprints'):
+                WeChatTestBot._recent_fingerprints = {}
+            
+            # 清理超过15秒的记录
+            for k in list(WeChatTestBot._recent_fingerprints.keys()):
+                if now - WeChatTestBot._recent_fingerprints[k] > 15:
+                    del WeChatTestBot._recent_fingerprints[k]
+            
+            if key in WeChatTestBot._recent_fingerprints:
+                logger.info(f"⏭️ 检测到重复消息（15秒内），跳过处理")
+                return True
+            
+            WeChatTestBot._recent_fingerprints[key] = now
+            return False
     
     def _handle_message(self, xml_data: str) -> str:
         """处理微信消息，返回 success"""
@@ -281,8 +291,7 @@ class WeChatTestBot:
                     # 先发送"正在输入"状态
                     self._send_typing(from_user)
                     
-                    # 改为同步发送消息（不再异步）
-                    # 原因：异步发送时微信可能因未收到客服消息而重试POST，导致重复处理
+                    # 同步发送消息（不再异步）
                     chunk_size = 1800
                     for i in range(0, len(reply), chunk_size):
                         chunk = reply[i:i + chunk_size]
