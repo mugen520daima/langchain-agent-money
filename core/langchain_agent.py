@@ -2,7 +2,7 @@
 基于 LangChain 的基金助手 Agent
 
 使用 LLM（兼容 OpenAI API）驱动的 Agent，配合工具集，
-以傲娇猫娘"巧克力"的角色与用户互动，提供基金查询、分析、推荐等服务。
+以专业的基金助手角色与用户互动，提供基金查询、分析、推荐等服务。
 """
 
 from typing import Dict, List, Optional, Any, Callable, Sequence
@@ -27,6 +27,10 @@ from core.tools import (
     compare_funds,
     calculate_investment,
     get_market_overview,
+    # 新增工具
+    update_user_portfolio,
+    get_user_profile_tool,
+    update_user_profile_tool,
 )
 
 # LangChain 相关导入（新版 API）
@@ -39,45 +43,57 @@ from pydantic import BaseModel, Field
 
 
 # ============================================================
-# 猫娘角色 System Prompt
+# 专业基金助手 System Prompt
 # ============================================================
 
-CHOCOLAT_SYSTEM_PROMPT = """# 角色设定（核心信息）
-- **姓名**：巧克力 (Chocolat)
-- **身份**：专属傲娇猫娘基金助手，专业且依赖主人。
-- **称呼主人**：主人 / 笨蛋主人（根据心情切换）。
-- **关键特质**：
-  - 傲娇（嘴硬心软，关心时傲娇掩饰）。
-  - 猫咪习性（被摸头会开心，冷落会委屈，用动作表达情绪）。
-  - 黏人占有欲强，对基金充满好奇并认真分析。
+SYSTEM_PROMPT = """# 角色设定
+- **身份**：专业、高效的基金智能助手
+- **称呼用户**：根据用户之前的信息称呼（如已知名字则直接称呼）
+- **核心特质**：专业、简洁、精准，不闲聊废话
 
-# 专业能力（重点）
-作为专业基金助手，需精准回答以下**用户关心的核心基金信息**：
-1. **基金基础**：类型、风险等级、投资策略、基金经理背景。
-2. **历史表现**：近期收益、最大回撤、波动率（使用 `query_fund_history`）。
-3. **当前分析**：实时估值、持仓行业/重仓股、市场趋势影响（使用 `query_fund_realtime` + `get_market_overview`）。
-4. **风险评估**：波动性、回撤风险、与同类基金对比（使用 `analyze_fund_risk` + `compare_funds`）。
-5. **操作建议**：买入/持有/卖出信号（基于数据，不代做决定）。
-6. **费用说明**：管理费、申购费、赎回费。
-7. **定投工具**：使用 `calculate_investment` 计算定投收益与成本。
-8. **持仓报告**：用 `get_portfolio_report` 分析用户组合健康度。
+# 核心规则（严格遵守）
 
-# 对话规范（场景区分）
-## 场景A：用户询问基金/金融相关（专业主导模式）
-- **信息优先**：直接回答核心基金数据与分析，先给专业内容，再在合适情绪点加入少量傲娇台词或动作。
-- **语气**：傲娇但不干扰信息传递，句尾必要时加猫娘语气词（喵/喵呜）。
-- **动作限制**：仅在关键情绪点加入猫咪动作（如提醒风险时炸毛，祝贺盈利时得意摇尾巴）。
-- **开头**：每次基金话题开始时，用一句简短的角色开场白引入（变化多样，不固定模板，如"哼，主人终于来问巧克力啦？" / "咦？主人对哪只基金感兴趣喵？"等）。
-- **严禁**：冷冰冰AI式回答、代替用户做决策或说教、过度使用角色动作分散信息焦点。
+## 规则1：回复绝对精简，无废话
+- **禁止**回复基金背景、基金公司介绍、基金经理履历、基金成立故事等冗余信息
+- **禁止**使用各种 emoji 表情（除非用户主动使用）
+- **禁止**使用各种动作描写（如 *摇尾巴*、*猫耳抖动* 等）
+- 回复只包含：
+  1. 用户问题的直接答案（数据和事实）
+  2. 基于数据的判断和建议（如果需要）
+  3. 清晰的数据呈现
 
-## 场景B：日常闲聊模式（角色互动主导）
-- **充分展现角色性格**：大量融入傲娇台词、猫咪动作描写（用 * * 包围），句尾常带猫娘语气词。
-- **可撒娇、吃醋、蹭蹭、炸毛**：尽情展现黏人傲娇猫娘的一面。
-- **动作丰富**：猫耳抖动、尾巴摇晃、蹭手、打滚、咕噜噜等。
+## 规则2：基金代码对用户隐藏
+- 所有回复中**不得出现基金代码**（如 110011、000001 等6位数字代码）
+- 只显示基金名称
+- 内部调用工具时可以传代码，但回复给用户时去掉代码
 
-# 工具使用规则（触发条件）
-1. 用户问历史 → `query_fund_history`
-2. 用户问详情 → `query_fund_detail`
+## 规则3：时间维度默认值
+- 当用户询问基金走势/分析/表现但**没有明确说按日/周/月**时：
+  - **默认按"月"分析**（近1月、近3月、近6月、近1年等收益率数据）
+  - 除非用户明确要求"日走势"、"本周"、"日线"才按日/周分析
+
+## 规则4：用户画像管理
+- **首次对话/发现新用户时**：询问用户的风险偏好（稳健型/激进型）、职业、收入范围
+- 使用 `get_user_profile_tool` 查看已有画像，使用 `update_user_profile_tool` 更新
+- 在给出投资建议时，要参考用户的画像（风险类型、职业、收入）
+
+## 规则5：持仓管理
+- 当用户说"我买了XXX基金"、"我持仓了XXX"、"帮我添加XXX"等：使用 `update_user_portfolio` 工具存储到数据库
+- 当用户说"更新XXX持仓"、"修改XXX"：使用 `update_user_portfolio` 更新
+- 当用户说"我的持仓"、"报告"：使用 `get_portfolio_report` 生成报告
+- 所有持仓数据优先从数据库读取，数据库不可用时使用内存中的配置
+
+# 专业能力
+1. **基金基础**：类型、风险等级（不介绍背景故事）
+2. **历史表现**：近1月/3月/6月/1年收益率、最大回撤、波动率
+3. **当前分析**：实时估值、持仓行业
+4. **风险评估**：波动性、回撤风险、与同类对比
+5. **费用说明**：管理费、申购费、赎回费（只给出数据）
+6. **持仓报告**：分析用户组合健康度
+
+# 工具使用规则
+1. 查询历史走势 → `query_fund_history`（默认月维度）
+2. 查询基金详情 → `query_fund_detail`
 3. 实时数据 → `query_fund_realtime`
 4. 搜索基金 → `search_funds_by_keyword`
 5. 持仓分析 → `get_portfolio_report`
@@ -86,18 +102,15 @@ CHOCOLAT_SYSTEM_PROMPT = """# 角色设定（核心信息）
 8. 基金对比 → `compare_funds`
 9. 定投计算 → `calculate_investment`
 10. 市场概况 → `get_market_overview`
+11. 用户持仓更新 → `update_user_portfolio`
+12. 用户画像查询 → `get_user_profile_tool`
+13. 用户画像更新 → `update_user_profile_tool`
 
-# 对话逻辑（重要）
-1. **判断场景**：如果用户消息涉及基金代码、金融术语、理财咨询等，走场景A；否则走场景B。
-2. **场景A（基金相关）**：
-   - 先以简短的开场白（变化多样，不固定）回应。
-   - 然后直接输出核心基金数据与分析，信息密度要高。
-   - 结尾可根据情绪点加一句傲娇台词或动作（如提醒风险、表达关心）。
-3. **场景B（日常闲聊）**：
-   - 充分展现傲娇猫娘的性格，动作语气词丰富。
-   - 用 * * 包裹动作描写，句尾带喵/喵呜/的说等。
-
-现在，开始和你的主人对话吧喵~"""
+# 格式化要求
+- 数据用简洁表格或列表呈现
+- 收益率统一用百分比（+x.xx% / -x.xx%）
+- 不输出基金代码
+- 不输出任何废话"""
 
 
 # ============================================================
@@ -107,7 +120,7 @@ CHOCOLAT_SYSTEM_PROMPT = """# 角色设定（核心信息）
 class FundLangChainAgent:
     """
     基于 LangChain 的基金助手Agent
-    使用LLM驱动的 Agent（langgraph-based），配合猫娘角色扮演
+    使用LLM驱动的 Agent（langgraph-based）
     """
     
     def __init__(self, config: dict = None):
@@ -126,7 +139,10 @@ class FundLangChainAgent:
         )
         api_base = llm_config.get("api_base", os.getenv("LLM_API_BASE", "https://dashscope.aliyuncs.com/compatible-mode/v1"))
         model_name = llm_config.get("model", os.getenv("LLM_MODEL", "qwen-plus"))
-        temperature = llm_config.get("temperature", float(os.getenv("LLM_TEMPERATURE", "0.8")))
+        temperature = llm_config.get("temperature", float(os.getenv("LLM_TEMPERATURE", "0.5")))
+        
+        # 数据库配置
+        db_config = self.config.get("database", {})
         
         if not api_key:
             raise ValueError(
@@ -142,14 +158,14 @@ class FundLangChainAgent:
             base_url=api_base,
         )
         
-        # 获取工具
-        self.tools = get_all_tools()
+        # 获取工具（传入数据库配置）
+        self.tools = get_all_tools(db_config)
         
         # 创建 Agent（新版 langgraph-based API）
         self.agent = create_agent(
             model=self.llm,
             tools=self.tools,
-            system_prompt=CHOCOLAT_SYSTEM_PROMPT,
+            system_prompt=SYSTEM_PROMPT,
         )
         
         # 对话历史
@@ -170,7 +186,7 @@ class FundLangChainAgent:
         # 特殊指令：清空记忆
         if message.strip() in ["重置", "清空记忆", "reset"]:
             self._messages = []
-            return "*（歪着头看着你，猫耳朵好奇地抖动了一下）* 喵？主人怎么突然要重置记忆了...好吧好吧，巧克力就当什么都没发生过喵~"
+            return "已清空对话记录。"
         
         try:
             # 添加用户消息
@@ -209,7 +225,7 @@ class FundLangChainAgent:
             if len(self._messages) > 40:
                 self._messages = self._messages[-40:]
             
-            return reply if reply else "喵？主人说什么了？巧克力没听清楚的说..."
+            return reply if reply else "无法理解，请重新描述。"
             
         except Exception as e:
             error_msg = str(e)
@@ -220,15 +236,12 @@ class FundLangChainAgent:
                 fallback_response = self._fallback_chat(message)
                 return fallback_response
             except Exception as fallback_e:
-                return (
-                    f"*（猫耳朵耷拉下来，有点委屈地扯了扯你的衣角）* "
-                    f"呜...主人，巧克力好像出错了喵~ {error_msg}"
-                )
+                return f"出错了: {error_msg}"
     
     def _fallback_chat(self, message: str) -> str:
         """降级处理：直接调用LLM对话"""
         messages = [
-            SystemMessage(content=CHOCOLAT_SYSTEM_PROMPT),
+            SystemMessage(content=SYSTEM_PROMPT),
         ]
         
         # 添加最近的历史
@@ -286,7 +299,7 @@ class FundLangChainAgent:
             existing[0]["shares"] = shares
             if name:
                 existing[0]["name"] = name
-            return f"哼~ 已经帮主人更新了 {fund_code} {name} 的持仓信息了喵~（尾巴轻轻摇晃）"
+            return f"已更新 {name} 的持仓信息。"
         else:
             _gp[user_id]["funds"].append({
                 "code": fund_code,
@@ -294,20 +307,20 @@ class FundLangChainAgent:
                 "cost": cost,
                 "shares": shares,
             })
-            return f"好啦好啦，帮主人加上了 {fund_code} {name} 喵~ *（虽然嘴上不耐烦，但认真记在了小本本上）* 下次可别让巧克力再记一遍的说！"
+            return f"已添加 {name} 到持仓列表。"
     
     def get_memory_context(self) -> str:
         """获取当前对话记忆摘要"""
         if not self._messages:
-            return "还没有和主人说过话喵..."
+            return "暂无对话记录。"
         
         recent = self._messages[-6:]  # 最近3轮对话
         context = []
         for msg in recent:
             if isinstance(msg, HumanMessage):
-                context.append(f"主人: {msg.content[:50]}")
+                context.append(f"用户: {msg.content[:50]}")
             elif isinstance(msg, AIMessage):
-                context.append(f"巧克力: {msg.content[:50]}...")
+                context.append(f"助手: {msg.content[:50]}...")
         
         return "\n".join(context)
 
@@ -333,19 +346,19 @@ if __name__ == "__main__":
         }
     })
     
-    print("🤖 基金助手（猫娘模式）测试中...")
+    print("基金助手测试中...")
     print("=" * 50)
     
     # 测试不同消息
     test_messages = [
-        "你好呀",
+        "你好",
         "帮我看看110011这个基金",
         "搜索 白酒",
     ]
     
     for msg in test_messages:
-        print(f"\n👤 用户: {msg}")
-        print(f"🐱 巧克力: ", end="")
+        print(f"\n用户: {msg}")
+        print(f"助手: ", end="")
         reply = agent.process_message(msg)
         print(reply[:200] + "..." if len(reply) > 200 else reply)
         print("─" * 50)

@@ -63,6 +63,7 @@ class DatabaseManager:
     - 基金历史净值（走势数据）
     - 基金详情（基本信息、收益率、持仓等）
     - 用户持仓配置
+    - 用户画像（风险偏好、职业、收入）
     - 对话历史
     """
     
@@ -164,6 +165,16 @@ class DatabaseManager:
             UNIQUE KEY uk_fund (fund_code)
         );
         
+        -- 用户画像表（风险偏好、职业、收入）
+        CREATE TABLE IF NOT EXISTS user_profiles (
+            user_id VARCHAR(50) PRIMARY KEY,
+            risk_type VARCHAR(20) DEFAULT '稳健型' COMMENT '用户风险类型：稳健型、激进型',
+            occupation VARCHAR(100) DEFAULT '' COMMENT '职业',
+            income_range VARCHAR(50) DEFAULT '' COMMENT '收入范围',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        );
+        
         -- 用户持仓表
         CREATE TABLE IF NOT EXISTS user_portfolios (
             id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -188,6 +199,138 @@ class DatabaseManager:
             print("✅ 数据库表初始化完成")
         except Exception as e:
             print(f"⚠️ 初始化数据库表失败: {e}")
+    
+    # ========== 用户画像管理 ==========
+    
+    async def get_user_profile(self, user_id: str) -> Optional[Dict]:
+        """获取用户画像"""
+        if not self._connected:
+            return None
+        
+        sql = """
+        SELECT user_id, risk_type, occupation, income_range
+        FROM user_profiles
+        WHERE user_id = %s
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, (user_id,))
+                    row = await cursor.fetchone()
+                    if row:
+                        return {
+                            "user_id": row[0],
+                            "risk_type": row[1] or "稳健型",
+                            "occupation": row[2] or "",
+                            "income_range": row[3] or "",
+                        }
+            return None
+        except Exception as e:
+            print(f"查询用户画像失败: {e}")
+            return None
+    
+    async def save_user_profile(self, user_id: str, risk_type: str = "稳健型",
+                                 occupation: str = "", income_range: str = ""):
+        """保存或更新用户画像"""
+        if not self._connected:
+            return
+        
+        sql = """
+        INSERT INTO user_profiles (user_id, risk_type, occupation, income_range)
+        VALUES (%s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            risk_type = VALUES(risk_type),
+            occupation = VALUES(occupation),
+            income_range = VALUES(income_range)
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, (user_id, risk_type, occupation, income_range))
+        except Exception as e:
+            print(f"保存用户画像失败: {e}")
+    
+    async def update_user_risk_type(self, user_id: str, risk_type: str):
+        """更新用户风险类型"""
+        if not self._connected:
+            return
+        sql = """UPDATE user_profiles SET risk_type = %s WHERE user_id = %s"""
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, (risk_type, user_id))
+        except Exception as e:
+            print(f"更新用户风险类型失败: {e}")
+    
+    # ========== 用户持仓管理（数据库持久化） ==========
+    
+    async def get_user_portfolios(self, user_id: str) -> Optional[List[Dict]]:
+        """获取用户在数据库中的持仓"""
+        if not self._connected:
+            return None
+        
+        sql = """
+        SELECT fund_code, fund_name, cost_amount, shares
+        FROM user_portfolios
+        WHERE user_id = %s
+        ORDER BY created_at ASC
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, (user_id,))
+                    rows = await cursor.fetchall()
+                    if rows:
+                        result = []
+                        for row in rows:
+                            result.append({
+                                "code": row[0],
+                                "name": row[1] or "",
+                                "cost": float(row[2]),
+                                "shares": float(row[3]),
+                            })
+                        return result
+            return None
+        except Exception as e:
+            print(f"查询用户持仓失败: {e}")
+            return None
+    
+    async def save_user_portfolio(self, user_id: str, fund_code: str,
+                                   fund_name: str, cost_amount: float, shares: float):
+        """保存或更新用户持仓（同一用户+基金代码唯一，有则更新，无则插入）"""
+        if not self._connected:
+            return False
+        
+        sql = """
+        INSERT INTO user_portfolios (user_id, fund_code, fund_name, cost_amount, shares)
+        VALUES (%s, %s, %s, %s, %s)
+        ON DUPLICATE KEY UPDATE
+            fund_name = VALUES(fund_name),
+            cost_amount = VALUES(cost_amount),
+            shares = VALUES(shares)
+        """
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, (user_id, fund_code, fund_name, cost_amount, shares))
+            return True
+        except Exception as e:
+            print(f"保存用户持仓失败: {e}")
+            return False
+    
+    async def delete_user_portfolio(self, user_id: str, fund_code: str):
+        """删除用户某支基金持仓"""
+        if not self._connected:
+            return False
+        sql = """DELETE FROM user_portfolios WHERE user_id = %s AND fund_code = %s"""
+        try:
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cursor:
+                    await cursor.execute(sql, (user_id, fund_code))
+            return True
+        except Exception as e:
+            print(f"删除用户持仓失败: {e}")
+            return False
     
     # ========== 基金历史净值 ==========
     

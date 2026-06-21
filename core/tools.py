@@ -2,7 +2,7 @@
 基金助手工具集 - LangChain Agent 使用的工具
 
 包含：
-1. query_fund_history - 查询基金历史净值走势（优先查数据库，没有则调API并入库）
+1. query_fund_history - 查询基金历史净值走势
 2. query_fund_detail - 查询基金详细信息
 3. query_fund_realtime - 查询基金实时估值
 4. search_funds_by_keyword - 搜索基金
@@ -12,6 +12,9 @@
 8. get_market_overview - 获取市场概况
 9. compare_funds - 比较多支基金
 10. calculate_investment - 计算定投/投资收益
+11. update_user_portfolio - 更新用户持仓（数据库持久化）
+12. get_user_profile_tool - 查询用户画像
+13. update_user_profile_tool - 更新用户画像
 """
 
 from typing import Dict, List, Optional, Any, Type
@@ -19,6 +22,7 @@ from datetime import datetime, timedelta
 import os
 import sys
 import json
+import re
 
 # 添加项目根路径
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -51,6 +55,7 @@ _portfolio_analyzer = PortfolioAnalyzer()
 _report_generator = ReportGenerator("zh")
 _fund_cache: Dict[str, dict] = {}
 _global_portfolios: Dict[str, dict] = {}  # 全局持仓数据（由 agent 设置）
+_db_config: Dict = {}  # 数据库配置
 
 
 def _get_fund_data(fund_code: str) -> Optional[Dict]:
@@ -63,38 +68,143 @@ def _get_fund_data(fund_code: str) -> Optional[Dict]:
     return data
 
 
+def _get_fund_name(fund_code: str) -> str:
+    """根据基金代码获取基金名称"""
+    info = _get_fund_data(fund_code)
+    if info:
+        return info.get("基金名称", fund_code)
+    return fund_code
+
+
 # ============================================================
-# 数据库模块（TiDB占位）
+# 数据库模块（TiDB）
 # ============================================================
 
 class DatabaseManager:
-    """数据库管理器 - TiDB（先留空）"""
+    """数据库管理器 - TiDB"""
     
     def __init__(self, config: dict = None):
         self.config = config or {}
         self._initialized = False
+        self._real_db = None
     
-    async def init(self):
-        """初始化数据库连接（先空着）"""
-        pass
+    async def _ensure_db(self):
+        """确保数据库已初始化"""
+        if not self._initialized and self.config.get("enabled", False):
+            try:
+                from db.database import get_db_manager
+                self._real_db = get_db_manager(self.config)
+                await self._real_db.connect()
+                self._initialized = True
+            except Exception as e:
+                print(f"数据库初始化失败: {e}")
     
     async def get_fund_history(self, fund_code: str) -> Optional[List[Dict]]:
-        """从数据库查询基金历史走势（先空着，返回None表示需要调API）"""
+        """从数据库查询基金历史走势"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                return await self._real_db.get_fund_history(fund_code)
+            except Exception:
+                pass
         return None
     
     async def save_fund_history(self, fund_code: str, history_data: List[Dict]):
-        """保存基金历史走势到数据库（先空着）"""
-        pass
+        """保存基金历史走势到数据库"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                await self._real_db.save_fund_history(fund_code, history_data)
+            except Exception:
+                pass
     
     async def get_fund_detail(self, fund_code: str) -> Optional[Dict]:
         """从数据库查询基金详情"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                return await self._real_db.get_fund_detail(fund_code)
+            except Exception:
+                pass
         return None
     
     async def save_fund_detail(self, fund_code: str, detail: Dict):
         """保存基金详情到数据库"""
-        pass
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                await self._real_db.save_fund_detail(fund_code, detail)
+            except Exception:
+                pass
+    
+    # ---------- 用户画像 ----------
+    
+    async def get_user_profile(self, user_id: str) -> Optional[Dict]:
+        """获取用户画像"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                return await self._real_db.get_user_profile(user_id)
+            except Exception:
+                pass
+        return None
+    
+    async def save_user_profile(self, user_id: str, risk_type: str = "稳健型",
+                                 occupation: str = "", income_range: str = ""):
+        """保存或更新用户画像"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                await self._real_db.save_user_profile(user_id, risk_type, occupation, income_range)
+            except Exception:
+                pass
+    
+    # ---------- 用户持仓 ----------
+    
+    async def get_user_portfolios(self, user_id: str) -> Optional[List[Dict]]:
+        """获取用户在数据库中的持仓"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                return await self._real_db.get_user_portfolios(user_id)
+            except Exception:
+                pass
+        return None
+    
+    async def save_user_portfolio(self, user_id: str, fund_code: str,
+                                   fund_name: str, cost_amount: float, shares: float) -> bool:
+        """保存或更新用户持仓"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                return await self._real_db.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares)
+            except Exception:
+                pass
+        return False
+    
+    async def delete_user_portfolio(self, user_id: str, fund_code: str) -> bool:
+        """删除用户某支基金持仓"""
+        await self._ensure_db()
+        if self._real_db:
+            try:
+                return await self._real_db.delete_user_portfolio(user_id, fund_code)
+            except Exception:
+                pass
+        return False
 
 _db_manager = DatabaseManager()
+
+
+def _run_async(coro):
+    """同步方式运行异步协程"""
+    try:
+        import asyncio
+        loop = asyncio.new_event_loop()
+        result = loop.run_until_complete(coro)
+        loop.close()
+        return result
+    except Exception:
+        return None
 
 
 # ============================================================
@@ -145,23 +255,23 @@ def _format_history_chart(history: List[Dict], max_points: int = 30) -> str:
     for v in values:
         normalized = (v - min_val) / diff * 6  # 0-6
         if normalized <= 1:
-            chars.append("▁")
+            chars.append("_")
         elif normalized <= 2:
-            chars.append("▂")
+            chars.append("_")
         elif normalized <= 3:
-            chars.append("▃")
+            chars.append("-")
         elif normalized <= 4:
-            chars.append("▅")
+            chars.append("-")
         elif normalized <= 5:
-            chars.append("▆")
+            chars.append("^")
         else:
-            chars.append("▇")
+            chars.append("^")
     
     chart = "".join(chars)
     
     # 格式化输出
     lines = [
-        f"📈 净值走势（最近{len(recent)}个交易日）",
+        f"净值走势（最近{len(recent)}个交易日）",
         f"  {chart}",
         f"  区间: {dates[0] if dates else ''} ~ {dates[-1] if dates else ''}",
         f"  区间涨跌: {period_return:+.2f}%",
@@ -172,12 +282,21 @@ def _format_history_chart(history: List[Dict], max_points: int = 30) -> str:
     return "\n".join(lines)
 
 
-def _get_portfolio_data(portfolios: dict, user_id: str = "default_user") -> tuple:
-    """获取用户的持仓配置数据"""
-    portfolio = portfolios.get(user_id, portfolios.get("default_user"))
-    if not portfolio:
-        return [], {}
-    funds = portfolio.get("funds", [])
+def _get_portfolio_data(user_id: str = "default_user") -> tuple:
+    """
+    获取用户的持仓配置数据
+    优先从数据库读取，数据库不可用时用内存中的配置
+    """
+    # 先尝试从数据库获取
+    db_portfolios = _run_async(_db_manager.get_user_portfolios(user_id))
+    if db_portfolios:
+        funds = db_portfolios
+    else:
+        # 回退到内存配置
+        portfolio = _global_portfolios.get(user_id, _global_portfolios.get("default_user"))
+        if not portfolio:
+            return [], {}
+        funds = portfolio.get("funds", [])
     
     holdings_data = []
     all_risk_warnings = {}
@@ -211,18 +330,34 @@ def _get_portfolio_data(portfolios: dict, user_id: str = "default_user") -> tupl
 
 
 # ============================================================
+# 工具：隐藏基金代码的处理函数
+# ============================================================
+
+def _hide_codes(text: str) -> str:
+    """从回复文本中隐藏基金代码（6位数字）"""
+    # 替换常见的 "基金名称 (代码)" 格式为只保留名称
+    text = re.sub(r'（\d{6}）', '', text)
+    text = re.sub(r'\(\d{6}\)', '', text)
+    # 替换单独的6位数字（但要避免替换净值数字等）
+    # 使用更精确的替换：只在基金上下文中的代码
+    return text
+
+
+# ============================================================
 # LangChain 工具定义
 # ============================================================
 
 class FundHistoryInput(BaseModel):
     fund_code: str = Field(description="基金代码，如 '110011'")
+    period: str = Field(default="month", description="分析周期: 'day'（日）, 'week'（周）, 'month'（月），默认'month'")
 
 @tool(args_schema=FundHistoryInput)
-def query_fund_history(fund_code: str) -> str:
+def query_fund_history(fund_code: str, period: str = "month") -> str:
     """
     查询基金的历史净值走势数据。
     优先从数据库查询，如果数据库没有则调用天天基金API获取并存入数据库。
     返回包含走势图、区间涨跌、最高最低净值等信息。
+    如果用户没有明确说按日/周/月，默认按月分析。
     """
     # 先尝试从数据库获取
     try:
@@ -231,26 +366,25 @@ def query_fund_history(fund_code: str) -> str:
         history = loop.run_until_complete(_db_manager.get_fund_history(fund_code))
         loop.close()
         if history:
-            # 数据库中已有
             chart = _format_history_chart(history)
-            return f"✅ 从数据库查到基金 [{fund_code}] 的历史走势：\n{chart}"
+            name = _get_fund_name(fund_code)
+            return f"{name} 历史走势：\n{chart}"
     except Exception:
         pass
     
     # 数据库没有，调API获取
     detail = get_fund_detail(fund_code)
     if not detail:
-        return f"❌ 无法获取基金 {fund_code} 的数据，请确认基金代码是否正确喵~"
+        return f"无法获取基金数据，请确认基金名称是否正确。"
     
     history = detail.get("历史净值", [])
     if not history:
-        # 尝试从综合信息获取
         info = _get_fund_data(fund_code)
         if info:
             history = info.get("历史净值", [])
     
     if not history:
-        return f"❌ 基金 {fund_code} 没有历史净值数据喵~"
+        return f"该基金没有历史净值数据。"
     
     # 异步保存到数据库（不阻塞返回）
     try:
@@ -262,10 +396,10 @@ def query_fund_history(fund_code: str) -> str:
         pass
     
     chart = _format_history_chart(history)
-    name = detail.get("基金名称", fund_code)
+    name = _get_fund_name(fund_code)
+    period_label = {"day": "日", "week": "周", "month": "月"}.get(period, "月")
     return (
-        f"📊 {name} ({fund_code}) 历史走势喵~\n"
-        f"（已保存到数据库）\n"
+        f"{name} 历史走势（{period_label}度）：\n"
         f"{chart}"
     )
 
@@ -276,29 +410,26 @@ class FundDetailInput(BaseModel):
 @tool(args_schema=FundDetailInput)
 def query_fund_detail(fund_code: str) -> str:
     """
-    查询基金的详细信息，包括基金名称、类型、规模、基金经理、收益率、
-    持仓数据、行业分布等完整信息。
+    查询基金的详细信息，包括基金名称、类型、规模、收益率、持仓数据等。
+    注意：回复中不要显示基金代码。
     """
     info = _get_fund_data(fund_code)
     if not info:
-        return f"❌ 无法获取基金 {fund_code} 的详细信息喵~ 请检查基金代码是否正确喵~"
+        return f"无法获取该基金的详细信息。"
     
     name = info.get("基金名称", fund_code)
     lines = [
-        f"📋 {name}（{fund_code}）详细信息喵~",
-        "─" * 35,
+        f"{name} 详细信息：",
+        "-" * 30,
         f"类型: {info.get('基金类型', '未知')}",
         f"规模: {info.get('基金规模(亿)', 0):.2f}亿元" if info.get("基金规模(亿)") else "规模: 未知",
-        f"经理: {info.get('基金经理', '未知')}",
-        f"公司: {info.get('基金公司', '未知')}",
-        f"成立: {info.get('成立日期', '未知')}",
     ]
     
     # 收益率
     returns = info.get("收益率", {})
     if returns:
         lines.append("")
-        lines.append("📈 阶段收益:")
+        lines.append("阶段收益:")
         lines.append(f"  近1月: {returns.get('近1月', 0):+.2f}%")
         lines.append(f"  近3月: {returns.get('近3月', 0):+.2f}%")
         lines.append(f"  近6月: {returns.get('近6月', 0):+.2f}%")
@@ -312,14 +443,14 @@ def query_fund_detail(fund_code: str) -> str:
     max_dd = info.get("最大回撤")
     if max_dd is not None:
         lines.append("")
-        lines.append(f"⚠️ 最大回撤: {abs(max_dd):.2f}%")
+        lines.append(f"最大回撤: {abs(max_dd):.2f}%")
     
-    # 持仓数据
+    # 持仓数据 - 只显示前3
     positions = info.get("持仓数据", [])
     if positions:
         lines.append("")
-        lines.append("🏢 前十大重仓股:")
-        for i, pos in enumerate(positions[:5], 1):
+        lines.append("前三大重仓股:")
+        for i, pos in enumerate(positions[:3], 1):
             lines.append(f"  {i}. {pos.get('股票名称', '')} ({pos.get('占净值比例(%)', 0):.2f}%)")
     
     return "\n".join(lines)
@@ -335,7 +466,7 @@ def query_fund_realtime(fund_code: str) -> str:
     """
     info = get_fund_realtime_estimate(fund_code)
     if not info:
-        return f"❌ 无法获取基金 {fund_code} 的实时估值喵~（非交易时间可能不显示）"
+        return f"无法获取该基金的实时估值（非交易时间可能不显示）。"
     
     name = info.get("基金名称", fund_code)
     estimate_nav = info.get("估算净值", 0)
@@ -343,16 +474,12 @@ def query_fund_realtime(fund_code: str) -> str:
     yesterday_nav = info.get("昨日净值", 0)
     estimate_time = info.get("估值时间", "")
     
-    emoji = "📈" if estimate_change >= 0 else "📉"
-    
     return (
-        f"{emoji} {name}（{fund_code}）实时估值喵~\n"
-        f"─" * 30 + "\n"
+        f"{name} 实时估值：\n"
         f"估算净值: {estimate_nav:.4f}\n"
         f"估算涨跌: {estimate_change:+.2f}%\n"
         f"昨日净值: {yesterday_nav:.4f}\n"
         f"估值时间: {estimate_time}\n"
-        f"（数据仅供参考，以当日官方公布的净值为准喵~）"
     )
 
 
@@ -364,48 +491,52 @@ def search_funds_by_keyword(keyword: str) -> str:
     """
     根据关键词搜索基金，支持基金名称、基金类型等模糊搜索。
     返回匹配的基金列表及基本信息。
+    注意：回复中不要显示基金代码。
     """
     results = search_funds(keyword)
     if not results:
-        return f"❌ 没有找到与「{keyword}」相关的基金喵~ 换个关键词试试喵~"
+        return f"没有找到与「{keyword}」相关的基金。换个关键词试试。"
     
-    # 按类型分组展示
-    lines = [f"🔍 搜索「{keyword}」找到 {len(results)} 支基金喵~"]
-    lines.append("─" * 35)
+    lines = [f"搜索「{keyword}」找到 {len(results)} 支基金："]
+    lines.append("-" * 30)
     
     for i, fund in enumerate(results[:15], 1):
-        lines.append(f"{i}. {fund['基金名称']}（{fund['基金代码']}）")
+        lines.append(f"{i}. {fund['基金名称']}")
         lines.append(f"   类型: {fund['基金类型']}")
     
     if len(results) > 15:
-        lines.append(f"  ... 还有 {len(results) - 15} 支基金未显示喵~")
-    
-    lines.append("")
-    lines.append("💡 发送基金代码可以查看详细信息喵~")
+        lines.append(f"  ... 还有 {len(results) - 15} 支未显示。")
     
     return "\n".join(lines)
 
 
-@tool
+class PortfolioReportInput(BaseModel):
+    user_id: str = Field(default="default_user", description="用户标识")
+
+@tool(args_schema=PortfolioReportInput)
 def get_portfolio_report(user_id: str = "default_user") -> str:
     """
     生成用户持仓的完整分析报告，包含持仓概览、明细分析、风险评估、基金推荐。
     需要用户已配置持仓信息。
+    注意：回复中不要显示基金代码。
     """
-    # 实际调用时通过全局变量获取持仓数据
-    portfolios = _global_portfolios if _global_portfolios else {}
-    
-    holdings_data, all_risk_warnings = _get_portfolio_data(portfolios, user_id)
+    holdings_data, all_risk_warnings = _get_portfolio_data(user_id)
     
     if not holdings_data:
-        return "❌ 没有找到你的持仓信息喵~ 请先在配置文件中设置持仓喵~"
+        return "没有找到你的持仓信息，请先告诉我你买了哪些基金。"
     
     # 持仓分析
     portfolio_result = _portfolio_analyzer.analyze_portfolio(holdings_data)
     
     # 获取推荐
-    portfolio = portfolios.get(user_id, portfolios.get("default_user", {}))
-    exclude_codes = [f["code"] for f in portfolio.get("funds", [])] if portfolio else []
+    portfolio = _global_portfolios.get(user_id, _global_portfolios.get("default_user", {}))
+    db_funds = _run_async(_db_manager.get_user_portfolios(user_id))
+    
+    exclude_codes = []
+    if db_funds:
+        exclude_codes = [f["code"] for f in db_funds]
+    elif portfolio:
+        exclude_codes = [f["code"] for f in portfolio.get("funds", [])]
     
     try:
         fund_list = get_recommended_funds(page=1, page_size=200)
@@ -414,13 +545,17 @@ def get_portfolio_report(user_id: str = "default_user") -> str:
     except Exception:
         recommendations = []
     
-    # 生成报告
+    # 生成报告 - 去掉基金代码
     report = _report_generator.generate_full_report(
         portfolio_analysis=portfolio_result,
         risk_warnings=all_risk_warnings,
         recommendations=recommendations,
         user_name=user_id,
     )
+    
+    # 隐藏代码
+    report = re.sub(r'（\d{6}）', '', report)
+    report = re.sub(r'\(\d{6}\)', '', report)
     
     return report
 
@@ -433,21 +568,29 @@ def get_fund_recommendations(count: int = 5) -> str:
     """
     从全市场获取基金推荐，基于多因子量化评分模型筛选优质基金。
     可指定推荐数量。
+    注意：回复中不要显示基金代码。
     """
     try:
         fund_list = get_recommended_funds(page=1, page_size=200)
         if not fund_list:
-            return "❌ 暂时无法获取基金推荐数据喵~ 请稍后重试喵~"
+            return "暂时无法获取基金推荐数据。"
         
         scored = _recommender.recommend(fund_list, top_n=min(count, 10))
         if not scored:
-            return "❌ 暂时没有找到合适的推荐喵~"
+            return "暂时没有找到合适的推荐。"
         
         recommendations = _recommender.get_recommendation_summary(scored)
-        return _report_generator.generate_recommendation_table(recommendations)
+        table = _report_generator.generate_recommendation_table(recommendations)
+        
+        # 隐藏代码
+        table = re.sub(r'代码: \d{6} \| ', '', table)
+        table = re.sub(r'（\d{6}）', '', table)
+        table = re.sub(r'\(\d{6}\)', '', table)
+        
+        return table
     
     except Exception as e:
-        return f"❌ 获取推荐时出错喵~ {str(e)}"
+        return f"获取推荐时出错: {str(e)}"
 
 
 class FundRiskInput(BaseModel):
@@ -458,28 +601,29 @@ def analyze_fund_risk(fund_code: str) -> str:
     """
     分析单支基金的风险状况，包括回撤风险、经理变更风险、规模风险、
     行业集中度风险、业绩突变风险等。
+    注意：回复中不要显示基金代码。
     """
     info = _get_fund_data(fund_code)
     if not info:
-        return f"❌ 无法获取基金 {fund_code} 的信息喵~"
+        return f"无法获取该基金的信息。"
     
     warnings = _risk_analyzer.analyze(info)
     summary = _risk_analyzer.summarize_risk_level(warnings)
     
     name = info.get("基金名称", fund_code)
     lines = [
-        f"⚠️ {name}（{fund_code}）风险分析报告喵~",
-        "─" * 35,
+        f"{name} 风险分析：",
+        "-" * 30,
         f"整体风险等级: {summary.get('整体风险', '未知')}",
         f"共发现 {summary.get('风险总数', 0)} 项风险提示",
-        f"  🔴 高危: {summary.get('高危数', 0)} 项",
-        f"  🟡 预警: {summary.get('预警数', 0)} 项",
-        f"  🔵 提示: {summary.get('提示数', 0)} 项",
+        f"  高危: {summary.get('高危数', 0)} 项",
+        f"  预警: {summary.get('预警数', 0)} 项",
+        f"  提示: {summary.get('提示数', 0)} 项",
     ]
     
     if warnings:
         lines.append("")
-        lines.append("详细风险列表:")
+        lines.append("详细风险:")
         for w in warnings:
             lines.append(f"\n  {w.get('等级', '')} {w.get('类型', '')}")
             lines.append(f"  {w.get('描述', '')}")
@@ -494,13 +638,14 @@ class CompareFundsInput(BaseModel):
 def compare_funds(fund_codes: str) -> str:
     """
     比较多支基金的收益率、规模、风险等指标。
-    输入格式：用逗号分隔的基金代码，如 '110011,000001,161725'
+    输入格式：用逗号分隔的基金代码。
+    注意：回复中不要显示基金代码。
     """
     codes = [c.strip() for c in fund_codes.split(",") if c.strip()]
     if len(codes) < 2:
-        return "❌ 请至少提供两支基金代码进行比较喵~ 例如: 110011,000001"
+        return "请至少提供两支基金进行比较。"
     if len(codes) > 5:
-        return "❌ 一次最多比较5支基金喵~"
+        return "一次最多比较5支基金。"
     
     funds_data = []
     for code in codes:
@@ -509,16 +654,13 @@ def compare_funds(fund_codes: str) -> str:
             funds_data.append(info)
     
     if len(funds_data) < 2:
-        return "❌ 无法获取足够的基金数据进行比较喵~"
+        return "无法获取足够的基金数据进行比较。"
     
-    lines = ["📊 基金对比喵~", "─" * 40]
-    
-    # 表头
-    headers = ["指标"] + [f.get("基金名称", f.get("基金代码", "")) for f in funds_data]
+    lines = ["基金对比：", "-" * 35]
     
     # 收益率对比
     returns_keys = ["近1月", "近3月", "近6月", "近1年", "近3年"]
-    lines.append("\n📈 收益率对比:")
+    lines.append("\n收益率对比:")
     for key in returns_keys:
         row = [key]
         for f in funds_data:
@@ -530,8 +672,8 @@ def compare_funds(fund_codes: str) -> str:
                 row.append("N/A")
         lines.append("  " + " | ".join(row))
     
-    # 规模对比
-    lines.append("\n🏢 规模和风险对比:")
+    # 规模和风险对比
+    lines.append("\n规模和风险对比:")
     for f in funds_data:
         size = f.get("基金规模(亿)", 0)
         mgr = f.get("基金经理", "未知")
@@ -540,7 +682,7 @@ def compare_funds(fund_codes: str) -> str:
         lines.append(f"  {f.get('基金名称', '')}: 规模{size:.1f}亿 | 经理:{mgr} | 最大回撤:{dd_str}")
     
     # 风险分析对比
-    lines.append("\n⚠️ 风险对比:")
+    lines.append("\n风险对比:")
     for f in funds_data:
         warnings = _risk_analyzer.analyze(f)
         summary = _risk_analyzer.summarize_risk_level(warnings)
@@ -560,30 +702,30 @@ def calculate_investment(fund_code: str, amount: float, periods: int = 12, frequ
     """
     模拟计算基金的定投收益，基于历史净值数据进行回测。
     需要提供基金代码、每期金额、期数和频率。
+    注意：回复中不要显示基金代码。
     """
     info = _get_fund_data(fund_code)
     if not info:
-        return f"❌ 无法获取基金 {fund_code} 的数据喵~"
+        return f"无法获取该基金的数据。"
     
     history = info.get("历史净值", [])
     if not history:
-        return f"❌ 基金 {fund_code} 没有足够的历史净值数据进行定投计算喵~"
+        return f"该基金没有足够的历史净值数据进行定投计算。"
     
     name = info.get("基金名称", fund_code)
     
     # 取足够的历史数据
-    step = 1 if frequency == "weekly" else 4  # 按周或按月取数据点
+    step = 1 if frequency == "weekly" else 4
     needed = periods * step
     
     if len(history) < needed:
-        # 用所有可用的数据
         needed = len(history)
         periods = needed // step
     
     recent_history = history[-needed:] if needed > 0 else history
     
     if len(recent_history) < 2:
-        return "❌ 历史数据不足，无法计算喵~"
+        return "历史数据不足，无法计算。"
     
     # 模拟定投
     total_invested = 0
@@ -591,7 +733,7 @@ def calculate_investment(fund_code: str, amount: float, periods: int = 12, frequ
     investments_made = 0
     
     for i, h in enumerate(recent_history):
-        if i % step == 0:  # 定投日
+        if i % step == 0:
             nav = h.get("单位净值", 0)
             if nav > 0:
                 shares_bought = amount / nav
@@ -605,14 +747,13 @@ def calculate_investment(fund_code: str, amount: float, periods: int = 12, frequ
     total_return = final_value - total_invested
     return_pct = (total_return / total_invested) * 100 if total_invested > 0 else 0
     
-    # 计算成本均价
     avg_cost = total_invested / total_shares if total_shares > 0 else 0
     
     freq_str = "周" if frequency == "weekly" else "月"
     
     lines = [
-        f"💎 {name}（{fund_code}）定投回测喵~",
-        "─" * 35,
+        f"{name} 定投回测：",
+        "-" * 30,
         f"定投方式: 每{freq_str}定投 {amount:.2f}元",
         f"定投次数: {investments_made} 次",
         f"总投资额: {total_invested:.2f}元",
@@ -622,9 +763,6 @@ def calculate_investment(fund_code: str, amount: float, periods: int = 12, frequ
         f"最终市值: {final_value:.2f}元",
         f"总收益: {total_return:+.2f}元（{return_pct:+.2f}%）",
     ]
-    
-    emoji = "📈" if total_return >= 0 else "📉"
-    lines.insert(1, f"{emoji}")
     
     return "\n".join(lines)
 
@@ -641,7 +779,7 @@ def get_market_overview(category: str = "all") -> str:
     try:
         fund_list = get_recommended_funds(page=1, page_size=100)
         if not fund_list:
-            return "❌ 暂时无法获取市场数据喵~"
+            return "暂时无法获取市场数据。"
         
         # 过滤类别
         if category != "all":
@@ -655,7 +793,7 @@ def get_market_overview(category: str = "all") -> str:
             fund_list = [f for f in fund_list if target in f.get("基金类型", "")]
         
         if not fund_list:
-            return f"❌ 没有找到相关类型的基金数据喵~"
+            return f"没有找到相关类型的基金数据。"
         
         # 统计概览
         total = len(fund_list)
@@ -670,37 +808,146 @@ def get_market_overview(category: str = "all") -> str:
         category_name = category if category != "all" else "全部"
         
         lines = [
-            f"📊 {category_name}基金市场概况喵~",
-            "─" * 35,
+            f"{category_name}基金市场概况：",
+            "-" * 30,
             f"统计基金数: {total} 支",
             f"今日上涨: {up_count} 支",
             f"今日下跌: {down_count} 支",
         ]
         
-        lines.append("\n📈 今日涨幅TOP5:")
+        lines.append("\n今日涨幅TOP5:")
         for i, f in enumerate(top_5, 1):
-            lines.append(f"  {i}. {f.get('基金名称', '')} ({f.get('基金代码', '')})")
-            lines.append(f"     {f.get('日涨跌幅', 0):+.2f}%")
+            lines.append(f"  {i}. {f.get('基金名称', '')}  {f.get('日涨跌幅', 0):+.2f}%")
         
-        lines.append("\n📉 今日跌幅TOP5:")
+        lines.append("\n今日跌幅TOP5:")
         for i, f in enumerate(bottom_5, 1):
-            lines.append(f"  {i}. {f.get('基金名称', '')} ({f.get('基金代码', '')})")
-            lines.append(f"     {f.get('日涨跌幅', 0):+.2f}%")
-        
-        lines.append("\n💡 回复基金代码可以查看详细信息喵~")
+            lines.append(f"  {i}. {f.get('基金名称', '')}  {f.get('日涨跌幅', 0):+.2f}%")
         
         return "\n".join(lines)
     
     except Exception as e:
-        return f"❌ 获取市场概况时出错喵~ {str(e)}"
+        return f"获取市场概况时出错: {str(e)}"
 
 
 # ============================================================
-# 所有工具列表
+# 工具：用户持仓管理（数据库持久化）
 # ============================================================
 
-def get_all_tools() -> List[BaseTool]:
-    """获取所有工具列表"""
+class UpdatePortfolioInput(BaseModel):
+    user_id: str = Field(default="default_user", description="用户标识")
+    fund_code: str = Field(description="基金代码，如 '110011'")
+    fund_name: str = Field(default="", description="基金名称（可自动获取）")
+    cost_amount: float = Field(description="总投入金额（元）")
+    shares: float = Field(description="持有份额")
+
+@tool(args_schema=UpdatePortfolioInput)
+def update_user_portfolio(user_id: str, fund_code: str, fund_name: str = "",
+                          cost_amount: float = 0, shares: float = 0) -> str:
+    """
+    添加或更新用户的基金持仓信息。
+    如果用户已持有该基金则更新，否则新增。
+    数据会持久化到数据库中。
+    注意：回复中不要显示基金代码。
+    """
+    # 自动获取基金名称
+    if not fund_name:
+        info = _get_fund_data(fund_code)
+        if info:
+            fund_name = info.get("基金名称", "")
+    
+    if not fund_name:
+        fund_name = get_fund_basic_info(fund_code).get("基金名称", fund_code) if get_fund_basic_info(fund_code) else fund_code
+    
+    # 先更新内存
+    if user_id not in _global_portfolios:
+        _global_portfolios[user_id] = {"funds": []}
+    
+    existing = [f for f in _global_portfolios[user_id]["funds"] if f["code"] == fund_code]
+    if existing:
+        existing[0]["cost"] = cost_amount
+        existing[0]["shares"] = shares
+        existing[0]["name"] = fund_name
+    else:
+        _global_portfolios[user_id]["funds"].append({
+            "code": fund_code, "name": fund_name, "cost": cost_amount, "shares": shares,
+        })
+    
+    # 保存到数据库
+    success = _run_async(_db_manager.save_user_portfolio(user_id, fund_code, fund_name, cost_amount, shares))
+    
+    if success:
+        return f"已保存 {fund_name} 的持仓信息（成本{cost_amount:.2f}元，{shares:.2f}份）。"
+    else:
+        return f"已记录 {fund_name} 的持仓信息（本地缓存）。"
+
+
+class DeletePortfolioInput(BaseModel):
+    user_id: str = Field(default="default_user", description="用户标识")
+    fund_code: str = Field(description="基金代码，如 '110011'")
+
+@tool(args_schema=DeletePortfolioInput)
+def delete_user_portfolio(user_id: str, fund_code: str) -> str:
+    """
+    删除用户的某支基金持仓。
+    """
+    name = _get_fund_name(fund_code)
+    
+    # 从内存删除
+    if user_id in _global_portfolios:
+    return f"已删除 {name} 的持仓信息。"
+
+
+# ============================================================
+# 工具：用户画像管理
+# ============================================================
+
+class GetUserProfileInput(BaseModel):
+    user_id: str = Field(default="default_user", description="用户标识")
+
+@tool(args_schema=GetUserProfileInput)
+def get_user_profile_tool(user_id: str = "default_user") -> str:
+    """
+    查询用户在数据库中的画像信息（风险偏好、职业、收入）。
+    首次对话时调用此工具判断是否需要新建画像。
+    """
+    profile = _run_async(_db_manager.get_user_profile(user_id))
+    if profile:
+        return (
+            f"用户画像: {profile.get('risk_type', '未知')}, "
+            f"职业: {profile.get('occupation', '未知')}, "
+            f"收入: {profile.get('income_range', '未知')}"
+        )
+    return f"用户 {user_id} 还没有画像信息，需要询问其风险偏好、职业和收入。"
+
+
+class UpdateUserProfileInput(BaseModel):
+    user_id: str = Field(default="default_user", description="用户标识")
+    risk_type: str = Field(default="稳健型", description="风险类型: '稳健型', '激进型'")
+    occupation: str = Field(default="", description="职业")
+    income_range: str = Field(default="", description="收入范围")
+
+@tool(args_schema=UpdateUserProfileInput)
+def update_user_profile_tool(user_id: str = "default_user", risk_type: str = "稳健型",
+                              occupation: str = "", income_range: str = "") -> str:
+    """
+    保存或更新用户的画像信息（风险偏好、职业、收入）。
+    当用户告知其风险偏好、职业或收入时调用此工具存储。
+    """
+    _run_async(_db_manager.save_user_profile(user_id, risk_type, occupation, income_range))
+    return f"已保存用户画像: {risk_type}, 职业:{occupation}, 收入:{income_range}"
+
+
+# ============================================================
+# 获取所有工具
+# ============================================================
+
+def get_all_tools(db_config: dict = None) -> List:
+    """获取所有可用的LangChain工具"""
+    global _db_config, _db_manager
+    if db_config:
+        _db_config = db_config
+        _db_manager.config = db_config
+    
     return [
         query_fund_history,
         query_fund_detail,
@@ -712,4 +959,8 @@ def get_all_tools() -> List[BaseTool]:
         compare_funds,
         calculate_investment,
         get_market_overview,
+        update_user_portfolio,
+        delete_user_portfolio,
+        get_user_profile_tool,
+        update_user_profile_tool,
     ]
